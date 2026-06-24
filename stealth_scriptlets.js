@@ -431,47 +431,47 @@
         }
     }
 
+    function hookYtcfg(cfg) {
+        if (!cfg || typeof cfg !== 'object') return;
+        
+        if (cfg.data_) {
+            sanitizeYtcfgObject(cfg.data_);
+        }
+        
+        if (typeof cfg.set === 'function') {
+            let originalSet = cfg.set;
+            cfg.set = function(...args) {
+                if (args[0] && typeof args[0] === 'object') {
+                    sanitizeYtcfgObject(args[0]);
+                } else if (typeof args[0] === 'string') {
+                    if (args[0] === 'PLAYER_CONFIG' || args[0] === 'PLAYER_VARS') {
+                        args[1] = sanitizeYtcfgValue(args[0], args[1]);
+                    } else if (args[0] === 'EXPERIMENT_FLAGS') {
+                        sanitizeExperimentFlags(args[1]);
+                    }
+                }
+                return originalSet.apply(this, args);
+            };
+            makeNative(cfg.set, 'set');
+        }
+
+        if (typeof cfg.get === 'function') {
+            let originalGet = cfg.get;
+            cfg.get = function(key) {
+                let val = originalGet.call(this, key);
+                if (key === 'PLAYER_CONFIG' || key === 'PLAYER_VARS') {
+                    return sanitizeYtcfgValue(key, val);
+                } else if (key === 'EXPERIMENT_FLAGS') {
+                    sanitizeExperimentFlags(val);
+                }
+                return val;
+            };
+            makeNative(cfg.get, 'get');
+        }
+    }
+
     function trapYtCfg() {
         let originalYtcfg = globalThis.ytcfg;
-
-        function hookYtcfg(cfg) {
-            if (!cfg || typeof cfg !== 'object') return;
-            
-            if (cfg.data_) {
-                sanitizeYtcfgObject(cfg.data_);
-            }
-            
-            if (typeof cfg.set === 'function') {
-                let originalSet = cfg.set;
-                cfg.set = function(...args) {
-                    if (args[0] && typeof args[0] === 'object') {
-                        sanitizeYtcfgObject(args[0]);
-                    } else if (typeof args[0] === 'string') {
-                        if (args[0] === 'PLAYER_CONFIG' || args[0] === 'PLAYER_VARS') {
-                            args[1] = sanitizeYtcfgValue(args[0], args[1]);
-                        } else if (args[0] === 'EXPERIMENT_FLAGS') {
-                            sanitizeExperimentFlags(args[1]);
-                        }
-                    }
-                    return originalSet.apply(this, args);
-                };
-                makeNative(cfg.set, 'set');
-            }
-
-            if (typeof cfg.get === 'function') {
-                let originalGet = cfg.get;
-                cfg.get = function(key) {
-                    let val = originalGet.call(this, key);
-                    if (key === 'PLAYER_CONFIG' || key === 'PLAYER_VARS') {
-                        return sanitizeYtcfgValue(key, val);
-                    } else if (key === 'EXPERIMENT_FLAGS') {
-                        sanitizeExperimentFlags(val);
-                    }
-                    return val;
-                };
-                makeNative(cfg.get, 'get');
-            }
-        }
 
         Object.defineProperty(globalThis, 'ytcfg', {
             get: () => originalYtcfg,
@@ -1790,43 +1790,40 @@
         console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
     }
 
-    function initializeServiceWorkerBypass() {
+    async function initializeServiceWorkerBypass() {
         try {
-            if (navigator.serviceWorker) {
-                navigator.serviceWorker.getRegistrations().then(registrations => {
-                    if (registrations && registrations.length > 0) {
-                        let promises = [];
-                        for (const registration of registrations) {
-                            promises.push(registration.unregister());
-                        }
-                        Promise.all(promises).then(results => {
-                            if (results.some(Boolean)) {
-                                console.log('[K10C YouTube Shield] Service Worker unregistered.');
-                                if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
-                                    globalThis.caches.keys().then(keys => {
-                                        for (const key of keys) {
-                                            globalThis.caches.delete(key);
-                                        }
-                                    }).catch(e => {
-                                        handleError(e);
-                                    });
-                                }
-
-                                let hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
-                                if (!hasReloaded) {
-                                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
-                                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
-                                    globalThis.location.reload();
-                                }
-                            }
-                        }).catch(e => {
-                            handleError(e);
-                        });
+            if (!navigator.serviceWorker) return;
+            
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            if (!registrations || registrations.length === 0) return;
+            
+            const promises = registrations.map(reg => reg.unregister());
+            const results = await Promise.all(promises);
+            
+            if (results.some(Boolean)) {
+                console.log('[K10C YouTube Shield] Service Worker unregistered.');
+                
+                // Clear cache storage
+                if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
+                    try {
+                        const keys = await globalThis.caches.keys();
+                        await Promise.all(keys.map(key => globalThis.caches.delete(key)));
+                    } catch (cacheErr) {
+                        handleError(cacheErr);
                     }
-                }).catch(e => {
-                    handleError(e);
-                });
+                }
+
+                const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
+                if (!hasReloaded) {
+                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
+                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
+                    globalThis.location.reload();
+                }
             }
+        } catch (e) {
+            handleError(e);
+        }
+    }
             if (globalThis.Navigator?.prototype) {
                 Object.defineProperty(globalThis.Navigator.prototype, 'serviceWorker', {
                     get: function() { return undefined; },
