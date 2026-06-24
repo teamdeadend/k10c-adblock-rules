@@ -1792,38 +1792,35 @@
 
     async function initializeServiceWorkerBypass() {
         try {
-            if (!navigator.serviceWorker) return;
-            
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            if (!registrations || registrations.length === 0) return;
-            
-            const promises = registrations.map(reg => reg.unregister());
-            const results = await Promise.all(promises);
-            
-            if (results.some(Boolean)) {
-                console.log('[K10C YouTube Shield] Service Worker unregistered.');
-                
-                // Clear cache storage
-                if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
-                    try {
-                        const keys = await globalThis.caches.keys();
-                        await Promise.all(keys.map(key => globalThis.caches.delete(key)));
-                    } catch (cacheErr) {
-                        handleError(cacheErr);
+            if (navigator.serviceWorker) {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                if (registrations && registrations.length > 0) {
+                    const promises = registrations.map(reg => reg.unregister());
+                    const results = await Promise.all(promises);
+                    
+                    if (results.some(Boolean)) {
+                        console.log('[K10C YouTube Shield] Service Worker unregistered.');
+                        
+                        // Clear cache storage
+                        if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
+                            try {
+                                const keys = await globalThis.caches.keys();
+                                await Promise.all(keys.map(key => globalThis.caches.delete(key)));
+                            } catch (cacheErr) {
+                                  handleError(cacheErr);
+                            }
+                        }
+
+                        const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
+                        if (!hasReloaded) {
+                            sessionStorage.setItem('k10c_sw_reloaded', 'true');
+                            console.log('[K10C YouTube Shield] Reloading to apply bypass...');
+                            globalThis.location.reload();
+                        }
                     }
                 }
-
-                const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
-                if (!hasReloaded) {
-                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
-                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
-                    globalThis.location.reload();
-                }
             }
-        } catch (e) {
-            handleError(e);
-        }
-    }
+            
             if (globalThis.Navigator?.prototype) {
                 Object.defineProperty(globalThis.Navigator.prototype, 'serviceWorker', {
                     get: function() { return undefined; },
