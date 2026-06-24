@@ -38,7 +38,7 @@
     ];
 
     // =========================================================================
-    // GENERAL UTILITY FUNCTIONS
+    // GENERAL UTILITY FUNCTIONS & OUT-OF-SCOPE HELPERS
     // =========================================================================
     function handleError(err) {
         const c = globalThis.console;
@@ -132,139 +132,100 @@
         }
     };
 
-    // =========================================================================
-    // INITIALIZATION & BYPASS SETUP BLOCK
-    // =========================================================================
-    function initializeServiceWorkerBypass() {
-        try {
-            if (navigator.serviceWorker) {
-                navigator.serviceWorker.getRegistrations().then(registrations => {
-                    if (registrations && registrations.length > 0) {
-                        let promises = [];
-                        for (const registration of registrations) {
-                            promises.push(registration.unregister());
-                        }
-                        Promise.all(promises).then(results => {
-                            if (results.some(Boolean)) {
-                                console.log('[K10C YouTube Shield] Service Worker unregistered.');
-                                clearCacheStorage();
-
-                                let hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
-                                if (!hasReloaded) {
-                                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
-                                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
-                                    globalThis.location.reload();
-                                }
-                            }
-                        }).catch(e => {
-                            handleError(e);
-                        });
+    function sanitizeExperimentFlags(flags) {
+        if (!flags || typeof flags !== 'object') return;
+        const keysToDisable = [
+            'ad_blocker_detection',
+            'ad_detection',
+            'ab_dec',
+            'ab_dec_2',
+            'grec_dec',
+            'blocker_detection',
+            'detection'
+        ];
+        for (let key in flags) {
+            if (typeof flags[key] === 'boolean') {
+                for (let check of keysToDisable) {
+                    if (key.toLowerCase().includes(check)) {
+                        flags[key] = false;
+                        console.log('[K10C YouTube Shield] Disabled anti-adblock experiment flag: ' + key);
                     }
-                }).catch(e => {
-                    handleError(e);
-                });
+                }
+            } else if (flags[key] && typeof flags[key] === 'object') {
+                sanitizeExperimentFlags(flags[key]);
             }
-            if (globalThis.Navigator?.prototype) {
-                Object.defineProperty(globalThis.Navigator.prototype, 'serviceWorker', {
-                    get: function() { return undefined; },
-                    configurable: false,
-                    enumerable: true
-                });
+        }
+    }
+
+    function sanitizeYtcfgValue(key, val) {
+        if (!val) return val;
+        try {
+            if (key === 'PLAYER_CONFIG' && val.args) {
+                sanitizeArgs(val.args);
+            } else if (key === 'PLAYER_VARS') {
+                sanitizeArgs(val);
             }
-            Object.defineProperty(navigator, 'serviceWorker', {
-                get: function() { return undefined; },
-                configurable: false,
-                enumerable: true
-            });
         } catch (e) {
             handleError(e);
         }
+        return val;
     }
 
-    function trapAddEventListener() {
-        const originalAddEventListener = EventTarget.prototype.addEventListener;
-        EventTarget.prototype.addEventListener = function(type, listener, options) {
-            if (!isCloudflareChallengeActive()) {
-                if (type === 'visibilitychange' || type === 'webkitvisibilitychange' || type === 'blur') {
-                    return;
-                }
+    function detectAd(player) {
+        const hasAdClass = player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting');
+        const hasAdOverlay = player.querySelector('.ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-slot') !== null;
+        const videoAds = player.querySelector('.video-ads');
+        const hasActiveVideoAds = videoAds && videoAds.children.length > 0;
+        return hasAdClass || hasAdOverlay || hasActiveVideoAds;
+    }
+
+    function tryClickSkipButton(player) {
+        const skipSelectors = [
+            '.ytp-ad-skip-button',
+            '.ytp-ad-skip-button-modern',
+            '.ytp-ad-skip-button-slot',
+            '.ytp-ad-skip-button-container',
+            '.video-ads .ytp-ad-skip-button',
+            '.ytp-ad-skip-button-slot button'
+        ];
+        for (const selector of skipSelectors) {
+            const btn = player.querySelector(selector);
+            if (btn && typeof btn.click === 'function') {
+                console.log('[K10C YouTube Shield] Clicking skip button:', selector);
+                btn.click();
+                return true;
             }
-            return originalAddEventListener.apply(this, arguments);
-        };
-        makeNative(EventTarget.prototype.addEventListener, 'addEventListener');
-    }
-
-    function trapAdsByGoogle() {
-        let mockQueue = [];
-        Object.defineProperty(globalThis, 'adsbygoogle', {
-            get: () => {
-                if (isCloudflareChallengeActive()) return undefined;
-                return mockQueue;
-            },
-            set: (val) => {
-                if (isCloudflareChallengeActive()) return;
-                if (Array.isArray(val)) {
-                    mockQueue = val;
-                    mockQueue.push = function(obj) {
-                        Array.prototype.push.call(this, obj);
-                        if (obj && typeof obj === 'object' && typeof obj.onload === 'function') {
-                            setTimeout(obj.onload, 10);
-                        }
-                    };
-                }
-            },
-            configurable: true
-        });
-    }
-
-    function trapMediaPause() {
-        const originalPause = HTMLMediaElement.prototype.pause;
-        HTMLMediaElement.prototype.pause = function() {
-            if (isCloudflareChallengeActive()) {
-                return originalPause.apply(this, arguments);
-            }
-            const stack = new Error('Stealth Pause Stack').stack || '';
-            if (stack.includes('visibilityState') || stack.includes('hidden') || stack.includes('onVisibilityChange')) {
-                console.log('[K10C Stealth] Ignored page visibility pause trigger.');
-                return;
-            }
-            return originalPause.apply(this, arguments);
-        };
-        makeNative(HTMLMediaElement.prototype.pause, 'pause');
-    }
-
-    function trapElementDimensions() {
-        const heightProp = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')?.get;
-        const widthProp = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')?.get;
-        if (heightProp && widthProp) {
-            Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
-                get: function() {
-                    if (isCloudflareChallengeActive()) {
-                        return heightProp.call(this);
-                    }
-                    const classList = this.className || '';
-                    if (classList.includes('ad') || classList.includes('banner')) {
-                        return 250;
-                    }
-                    return heightProp.call(this);
-                },
-                configurable: true
-            });
-            Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
-                get: function() {
-                    if (isCloudflareChallengeActive()) {
-                        return widthProp.call(this);
-                    }
-                    const classList = this.className || '';
-                    if (classList.includes('ad') || classList.includes('banner')) {
-                        return 300;
-                    }
-                    return widthProp.call(this);
-                },
-                configurable: true
-            });
         }
+        return false;
     }
+
+    const handleStyleNode = function(node) {
+        try {
+            const sheetText = node.textContent || '';
+            if (sheetText.includes('body') && sheetText.includes('overflow') && sheetText.includes('hidden')) {
+                node.textContent = sheetText.replace(/body\s*{[^}]*overflow\s*:\s*hidden[^}]*}/gi, '');
+                console.log('[K10C Stealth] Neutralized scroll lock in dynamic style element.');
+            }
+        } catch (err) {
+            handleError(err);
+        }
+    };
+
+    const handleIframeNode = function(node) {
+        try {
+            if (!node.hasAttribute('sandbox')) {
+                node.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+                console.log('[K10C Stealth] Sandboxed dynamic iframe.');
+                globalThis.ReactNativeWebView?.postMessage?.(JSON.stringify({
+                    type: 'DEBUG_LOG',
+                    category: 'Blocker',
+                    message: 'Sandboxed dynamic iframe'
+                }));
+            }
+        } catch (err) {
+            handleError(err);
+        }
+    };
 
     // =========================================================================
     // YOUTUBE RESPONSE SANITIZATION ENGINE
@@ -320,7 +281,7 @@
             cleanAdFields(current);
 
             for (const key in current) {
-                if (Object.prototype.hasOwnProperty.call(current, key)) {
+                if (Object.hasOwn(current, key)) {
                     cleanPropertyValue(current, key);
                 }
             }
@@ -458,45 +419,6 @@
 
     function trapYtCfg() {
         let originalYtcfg = globalThis.ytcfg;
-
-        function sanitizeExperimentFlags(flags) {
-            if (!flags || typeof flags !== 'object') return;
-            const keysToDisable = [
-                'ad_blocker_detection',
-                'ad_detection',
-                'ab_dec',
-                'ab_dec_2',
-                'grec_dec',
-                'blocker_detection',
-                'detection'
-            ];
-            for (let key in flags) {
-                if (typeof flags[key] === 'boolean') {
-                    for (let check of keysToDisable) {
-                        if (key.toLowerCase().includes(check)) {
-                            flags[key] = false;
-                            console.log('[K10C YouTube Shield] Disabled anti-adblock experiment flag: ' + key);
-                        }
-                    }
-                } else if (flags[key] && typeof flags[key] === 'object') {
-                    sanitizeExperimentFlags(flags[key]);
-                }
-            }
-        }
-
-        function sanitizeYtcfgValue(key, val) {
-            if (!val) return val;
-            try {
-                if (key === 'PLAYER_CONFIG' && val.args) {
-                    sanitizeArgs(val.args);
-                } else if (key === 'PLAYER_VARS') {
-                    sanitizeArgs(val);
-                }
-            } catch (e) {
-                handleError(e);
-            }
-            return val;
-        }
 
         function sanitizeYtcfgObject(obj) {
             if (!obj || typeof obj !== 'object') return;
@@ -694,32 +616,25 @@
         let lastPlaybackRate = 1;
         let isAdActive = false;
 
-        function detectAd(player) {
-            const hasAdClass = player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting');
-            const hasAdOverlay = player.querySelector('.ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-slot') !== null;
-            const videoAds = player.querySelector('.video-ads');
-            const hasActiveVideoAds = videoAds && videoAds.children.length > 0;
-            return hasAdClass || hasAdOverlay || hasActiveVideoAds;
-        }
+        function skipYouTubeAds() {
+            try {
+                const player = document.querySelector('.html5-video-player');
+                if (!player) return;
+                
+                const video = player.querySelector('video');
+                if (!video) return;
 
-        function tryClickSkipButton(player) {
-            const skipSelectors = [
-                '.ytp-ad-skip-button',
-                '.ytp-ad-skip-button-modern',
-                '.ytp-ad-skip-button-slot',
-                '.ytp-ad-skip-button-container',
-                '.video-ads .ytp-ad-skip-button',
-                '.ytp-ad-skip-button-slot button'
-            ];
-            for (const selector of skipSelectors) {
-                const btn = player.querySelector(selector);
-                if (btn && typeof btn.click === 'function') {
-                    console.log('[K10C YouTube Shield] Clicking skip button:', selector);
-                    btn.click();
-                    return true;
+                if (detectAd(player)) {
+                    handleActiveAd(video, player);
+                } else if (isAdActive) {
+                    isAdActive = false;
+                    video.muted = lastMutedState;
+                    video.playbackRate = lastPlaybackRate === 16 ? 1 : lastPlaybackRate;
+                    console.log('[K10C YouTube Shield] Ad ended. Restoring state:', {muted: lastMutedState, rate: lastPlaybackRate});
                 }
+            } catch (e) {
+                handleError(e);
             }
-            return false;
         }
 
         function handleActiveAd(video, player) {
@@ -739,27 +654,6 @@
 
             if (video.duration && Number.isFinite(video.duration) && video.currentTime < video.duration - 0.2) {
                 video.currentTime = video.duration - 0.1;
-            }
-        }
-
-        function skipYouTubeAds() {
-            try {
-                const player = document.querySelector('.html5-video-player');
-                if (!player) return;
-                
-                const video = player.querySelector('video');
-                if (!video) return;
-
-                if (detectAd(player)) {
-                    handleActiveAd(video, player);
-                } else if (isAdActive) {
-                    isAdActive = false;
-                    video.muted = lastMutedState;
-                    video.playbackRate = lastPlaybackRate === 16 ? 1 : lastPlaybackRate;
-                    console.log('[K10C YouTube Shield] Ad ended. Restoring state:', {muted: lastMutedState, rate: lastPlaybackRate});
-                }
-            } catch (e) {
-                handleError(e);
             }
         }
 
@@ -1384,8 +1278,8 @@
             URL.createObjectURL = function(blob) {
                 const objectUrl = originalCreateObjectURL.call(URL, blob);
                 
-                if (!isTrustedHost && blob && blob.type && blob.size && blob.size < 15 * 1024 * 1024 &&
-                    (blob.type.includes('video') || blob.type.includes('mpegurl') || blob.type.includes('mp4'))) {
+                if (!isTrustedHost && blob?.size < 15 * 1024 * 1024 &&
+                    (blob?.type?.includes('video') || blob?.type?.includes('mpegurl') || blob?.type?.includes('mp4'))) {
                     
                     if (!sniffedRegistry[objectUrl]) {
                         sniffedRegistry[objectUrl] = true;
@@ -1725,34 +1619,6 @@
     // DOM MUTATION OBSERVERS & PAGE SCANNERS
     // =========================================================================
     function setupMutationObserverAndScanner() {
-        const handleStyleNode = function(node) {
-            try {
-                const sheetText = node.textContent || '';
-                if (sheetText.includes('body') && sheetText.includes('overflow') && sheetText.includes('hidden')) {
-                    node.textContent = sheetText.replace(/body\s*{[^}]*overflow\s*:\s*hidden[^}]*}/gi, '');
-                    console.log('[K10C Stealth] Neutralized scroll lock in dynamic style element.');
-                }
-            } catch (err) {
-                handleError(err);
-            }
-        };
-
-        const handleIframeNode = function(node) {
-            try {
-                if (!node.hasAttribute('sandbox')) {
-                    node.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
-                    console.log('[K10C Stealth] Sandboxed dynamic iframe.');
-                    globalThis.ReactNativeWebView?.postMessage?.(JSON.stringify({
-                        type: 'DEBUG_LOG',
-                        category: 'Blocker',
-                        message: 'Sandboxed dynamic iframe'
-                    }));
-                }
-            } catch (err) {
-                handleError(err);
-            }
-        };
-
         const handleMutationNode = function(node) {
             const tag = node.tagName;
             if (tag === 'VIDEO') {
