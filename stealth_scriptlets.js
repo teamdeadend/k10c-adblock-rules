@@ -716,4 +716,5 @@
     })();
 
     console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
+    // test comment to verify decoupled updates
 })();
