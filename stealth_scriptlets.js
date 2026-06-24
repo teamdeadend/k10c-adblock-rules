@@ -54,18 +54,6 @@
     globalThis.addEventListener('mousedown', updateGestureTime, true);
     globalThis.addEventListener('touchstart', updateGestureTime, true);
 
-    function clearCacheStorage() {
-        if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
-            globalThis.caches.keys().then(keys => {
-                for (const key of keys) {
-                    globalThis.caches.delete(key);
-                }
-            }).catch(e => {
-                handleError(e);
-            });
-        }
-    }
-
     function isCloudflareChallengeActive() {
         try {
             const host = globalThis.location.hostname.toLowerCase();
@@ -171,6 +159,19 @@
         return val;
     }
 
+    function sanitizeYtcfgObject(obj) {
+        if (!obj || typeof obj !== 'object') return;
+        if (obj.PLAYER_CONFIG) {
+            obj.PLAYER_CONFIG = sanitizeYtcfgValue('PLAYER_CONFIG', obj.PLAYER_CONFIG);
+        }
+        if (obj.PLAYER_VARS) {
+            obj.PLAYER_VARS = sanitizeYtcfgValue('PLAYER_VARS', obj.PLAYER_VARS);
+        }
+        if (obj.EXPERIMENT_FLAGS) {
+            sanitizeExperimentFlags(obj.EXPERIMENT_FLAGS);
+        }
+    }
+
     function detectAd(player) {
         const hasAdClass = player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting');
         const hasAdOverlay = player.querySelector('.ytp-ad-player-overlay, .ytp-ad-overlay-container, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-slot') !== null;
@@ -224,6 +225,19 @@
             }
         } catch (err) {
             handleError(err);
+        }
+    };
+
+    const handleMutationNode = function(node) {
+        const tag = node.tagName;
+        if (tag === 'VIDEO') {
+            registerActiveVideo(node);
+        } else if (tag === 'SOURCE' && node.parentNode?.tagName === 'VIDEO') {
+            registerActiveVideo(node.parentNode);
+        } else if (tag === 'STYLE') {
+            handleStyleNode(node);
+        } else if (tag === 'IFRAME') {
+            handleIframeNode(node);
         }
     };
 
@@ -419,19 +433,6 @@
 
     function trapYtCfg() {
         let originalYtcfg = globalThis.ytcfg;
-
-        function sanitizeYtcfgObject(obj) {
-            if (!obj || typeof obj !== 'object') return;
-            if (obj.PLAYER_CONFIG) {
-                obj.PLAYER_CONFIG = sanitizeYtcfgValue('PLAYER_CONFIG', obj.PLAYER_CONFIG);
-            }
-            if (obj.PLAYER_VARS) {
-                obj.PLAYER_VARS = sanitizeYtcfgValue('PLAYER_VARS', obj.PLAYER_VARS);
-            }
-            if (obj.EXPERIMENT_FLAGS) {
-                sanitizeExperimentFlags(obj.EXPERIMENT_FLAGS);
-            }
-        }
 
         function hookYtcfg(cfg) {
             if (!cfg || typeof cfg !== 'object') return;
@@ -1619,19 +1620,6 @@
     // DOM MUTATION OBSERVERS & PAGE SCANNERS
     // =========================================================================
     function setupMutationObserverAndScanner() {
-        const handleMutationNode = function(node) {
-            const tag = node.tagName;
-            if (tag === 'VIDEO') {
-                registerActiveVideo(node);
-            } else if (tag === 'SOURCE' && node.parentNode?.tagName === 'VIDEO') {
-                registerActiveVideo(node.parentNode);
-            } else if (tag === 'STYLE') {
-                handleStyleNode(node);
-            } else if (tag === 'IFRAME') {
-                handleIframeNode(node);
-            }
-        };
-
         const mainMutationHandler = mutations => {
             for (const mutation of mutations) {
                 if (mutation.addedNodes) {
@@ -1800,6 +1788,60 @@
         setupCosmeticOverlayBuster();
 
         console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
+    }
+
+    function initializeServiceWorkerBypass() {
+        try {
+            if (navigator.serviceWorker) {
+                navigator.serviceWorker.getRegistrations().then(registrations => {
+                    if (registrations && registrations.length > 0) {
+                        let promises = [];
+                        for (const registration of registrations) {
+                            promises.push(registration.unregister());
+                        }
+                        Promise.all(promises).then(results => {
+                            if (results.some(Boolean)) {
+                                console.log('[K10C YouTube Shield] Service Worker unregistered.');
+                                if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
+                                    globalThis.caches.keys().then(keys => {
+                                        for (const key of keys) {
+                                            globalThis.caches.delete(key);
+                                        }
+                                    }).catch(e => {
+                                        handleError(e);
+                                    });
+                                }
+
+                                let hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
+                                if (!hasReloaded) {
+                                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
+                                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
+                                    globalThis.location.reload();
+                                }
+                            }
+                        }).catch(e => {
+                            handleError(e);
+                        });
+                    }
+                }).catch(e => {
+                    handleError(e);
+                });
+            }
+            if (globalThis.Navigator?.prototype) {
+                Object.defineProperty(globalThis.Navigator.prototype, 'serviceWorker', {
+                    get: function() { return undefined; },
+                    configurable: false,
+                    enumerable: true
+                });
+            }
+            Object.defineProperty(navigator, 'serviceWorker', {
+                get: function() { return undefined; },
+                configurable: false,
+                enumerable: true
+            });
+        } catch (e) {
+            handleError(e);
+        }
     }
 
     // Launch Engine
