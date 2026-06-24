@@ -715,6 +715,1063 @@
         setInterval(skipYouTubeAds, 150);
     })();
 
+    // =========================================================================
+    // MOBILE CLIENT INTERCEPTIONS & MEDIA SNIFFER
+    // =========================================================================
+
+    // A. Shared Gesture & Host variables
+    let lastUserGestureTime = 0;
+    function updateGestureTime() {
+        lastUserGestureTime = Date.now();
+    }
+    globalThis.addEventListener('click', updateGestureTime, true);
+    globalThis.addEventListener('mousedown', updateGestureTime, true);
+    globalThis.addEventListener('touchstart', updateGestureTime, true);
+
+    let isTrustedHost = false;
+    try {
+        const currentHost = globalThis.location.hostname;
+        if (currentHost) {
+            const hostLower = currentHost.toLowerCase();
+            const trustedDomains = [
+                'youtube.com', 'm.youtube.com', 'youtu.be', 
+                'google.com', 'google.co.in', 'wikipedia.org', 
+                'github.com', 'instagram.com', 'facebook.com'
+            ];
+            isTrustedHost = trustedDomains.some(d => hostLower === d || hostLower.endsWith('.' + d));
+        }
+    } catch (e) {
+        isTrustedHost = false;
+    }
+
+    // B. Whitelist for Trusted Redirect Domains (Popunder Buster)
+    const TRUSTED_REDIRECT_DOMAINS = [
+        'google.com', 'google.co.in', 'googleadservices.com', 'google-analytics.com', 'googletagmanager.com',
+        'facebook.com', 'facebook.net', 'fbcdn.net',
+        'twitter.com', 'twitter.co', 'x.com', 'twimg.com',
+        'github.com', 'githubusercontent.com',
+        'apple.com', 'microsoft.com', 'live.com', 'outlook.com',
+        'linkedin.com', 'pinterest.com', 'tumblr.com',
+        'reddit.com', 'whatsapp.com', 'telegram.org',
+        'paypal.com', 'stripe.com', 'wikipedia.org',
+        'vimeo.com', 'dailymotion.com', 'spotify.com',
+        'youtube.com', 'youtu.be', 'googlevideo.com', 'ytimg.com',
+        'instagram.com', 'cdninstagram.com',
+        'recaptcha.net', 'gstatic.com', 'cloudflare.com',
+        'disqus.com', 'disquscdn.com'
+    ];
+
+    function shouldBlockNavigation(urlStr) {
+        if (!urlStr) return false;
+        try {
+            const urlLower = urlStr.trim().toLowerCase();
+            if (!urlLower.startsWith('http://') && !urlLower.startsWith('https://')) {
+                return false;
+            }
+            const urlObj = new URL(urlLower);
+            if (urlObj.origin === globalThis.location.origin) {
+                return false;
+            }
+            const hostname = urlObj.hostname.toLowerCase();
+            const isTrusted = TRUSTED_REDIRECT_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d));
+            return !isTrusted;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // C. Clickjacking Overlay Buster
+    function isClickjackingOverlay(el) {
+        if (!el) return false;
+        const tagName = el.tagName.toUpperCase();
+        if (tagName === 'A' || tagName === 'BUTTON' || tagName === 'INPUT' || tagName === 'VIDEO' || tagName === 'AUDIO' || tagName === 'SELECT' || tagName === 'TEXTAREA') {
+            return false;
+        }
+        const role = el.getAttribute('role');
+        if (role === 'button' || role === 'link') {
+            return false;
+        }
+        const rect = el.getBoundingClientRect();
+        const vpWidth = globalThis.innerWidth || document.documentElement.clientWidth;
+        const vpHeight = globalThis.innerHeight || document.documentElement.clientHeight;
+        if (rect.width < vpWidth * 0.45 || rect.height < vpHeight * 0.45) {
+            return false;
+        }
+        const style = globalThis.getComputedStyle(el);
+        const pos = style.position;
+        if (pos !== 'absolute' && pos !== 'fixed' && rect.top > 120) {
+            return false;
+        }
+        const opacity = parseFloat(style.opacity);
+        if (opacity < 0.15) {
+            return true;
+        }
+        const bg = style.backgroundColor;
+        const isBgTransparent = bg === 'transparent' || 
+                                bg === 'rgba(0, 0, 0, 0)' || 
+                                bg.replace(/\s/g, '').indexOf('rgba(0,0,0,0') === 0 || 
+                                style.background === 'none';
+        const hasText = el.innerText && el.innerText.trim().length > 0;
+        const hasImages = el.querySelector('img, svg, iframe, video, object') !== null;
+        const hasBorder = parseInt(style.borderWidth, 10) > 0 || style.borderStyle !== 'none';
+        if (isBgTransparent && !hasText && !hasImages && !hasBorder) {
+            return true;
+        }
+        return false;
+    }
+
+    function suppressAndReDispatch(e, clientX, clientY, eventName) {
+        const element = document.elementFromPoint(clientX, clientY);
+        if (isClickjackingOverlay(element)) {
+            console.warn('[K10C Stealth] Suppressed invisible clickjacking overlay:', element);
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            element.style.setProperty('pointer-events', 'none', 'important');
+            element.style.setProperty('display', 'none', 'important');
+
+            const idOrClass = element.id ? '#' + element.id : (element.className ? '.' + String(element.className).split(' ')[0] : element.tagName);
+            if (globalThis.ReactNativeWebView?.postMessage) {
+                globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'DEBUG_LOG',
+                    category: 'Overlay',
+                    message: 'Bypassed clickjacking overlay ' + idOrClass
+                }));
+            }
+
+            const realElement = document.elementFromPoint(clientX, clientY);
+            if (realElement && realElement !== element) {
+                console.log('[K10C Stealth] Re-routing click to:', realElement);
+                let newEvent;
+                if (eventName === 'mousedown') {
+                    newEvent = new MouseEvent('click', {
+                        clientX: clientX,
+                        clientY: clientY,
+                        bubbles: true,
+                        cancelable: true,
+                        view: globalThis
+                    });
+                } else if (eventName === 'touchstart' && e.touches) {
+                    newEvent = new TouchEvent('touchstart', {
+                        touches: Array.prototype.slice.call(e.touches),
+                        targetTouches: Array.prototype.slice.call(e.targetTouches),
+                        changedTouches: Array.prototype.slice.call(e.changedTouches),
+                        bubbles: true,
+                        cancelable: true,
+                        view: globalThis
+                    });
+                }
+                if (newEvent) {
+                    realElement.dispatchEvent(newEvent);
+                    if (eventName === 'touchstart') {
+                        setTimeout(() => {
+                            try {
+                                const clickEv = new MouseEvent('click', {
+                                    clientX: clientX,
+                                    clientY: clientY,
+                                    bubbles: true,
+                                    cancelable: true,
+                                    view: globalThis
+                                });
+                                realElement.dispatchEvent(clickEv);
+                            } catch(err) {}
+                        }, 50);
+                    }
+                }
+            }
+        }
+    }
+
+    if (!isTrustedHost) {
+        globalThis.addEventListener('mousedown', e => {
+            try {
+                suppressAndReDispatch(e, e.clientX, e.clientY, 'mousedown');
+            } catch(err) {}
+        }, true);
+
+        globalThis.addEventListener('touchstart', e => {
+            try {
+                if (e.touches && e.touches.length > 0) {
+                    const touch = e.touches[0];
+                    suppressAndReDispatch(e, touch.clientX, touch.clientY, 'touchstart');
+                }
+            } catch(err) {}
+        }, true);
+    }
+
+    // D. Link click hijack interceptor
+    function isLegitimateLinkClick(e) {
+        try {
+            if (e && e.isTrusted === false) {
+                return null;
+            }
+            const anchor = e.target.closest('a');
+            if (!anchor) return null;
+            let href = anchor.href;
+            if (!href) return null;
+            href = href.trim();
+            if (!href.startsWith('http://') && !href.startsWith('https://')) {
+                return null;
+            }
+            const urlObj = new URL(href);
+            if (urlObj.pathname === globalThis.location.pathname && urlObj.hostname === globalThis.location.hostname && urlObj.hash) {
+                return null;
+            }
+            return { anchor, href, hostname: urlObj.hostname };
+        } catch (err) {
+            return null;
+        }
+    }
+
+    if (!isTrustedHost) {
+        globalThis.addEventListener('click', e => {
+            try {
+                const linkInfo = isLegitimateLinkClick(e);
+                if (linkInfo) {
+                    const { href, anchor } = linkInfo;
+                    console.log('[K10C Stealth] Bypassing click hijack for link:', href);
+                    
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+
+                    if (globalThis.ReactNativeWebView?.postMessage) {
+                        globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'DEBUG_LOG',
+                            category: 'Blocker',
+                            message: 'Bypassed ad click-hijack: ' + href.substring(0, 50)
+                        }));
+                    }
+
+                    if (anchor.target === '_blank' || e.button === 1 || e.ctrlKey) {
+                        if (globalThis.ReactNativeWebView?.postMessage) {
+                            globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'NAVIGATE_TO_URL',
+                                url: href
+                            }));
+                        }
+                    } else {
+                        globalThis.location.href = href;
+                    }
+                }
+            } catch(err) {}
+        }, true);
+    }
+
+    // E. 3-4 Click Redirect Buster (Popunder & Button redirection bypass)
+    function shouldBypassEventBlocker(event) {
+        if (!event) return false;
+        const type = event.type;
+        if (type !== 'click' && type !== 'mousedown' && type !== 'touchstart') {
+            return false;
+        }
+        if (isTrustedHost) {
+            return false;
+        }
+        try {
+            const stack = new Error().stack || '';
+            const stackLower = stack.toLowerCase();
+            
+            const adKeywords = [
+                'popmagic', 'admaven', 'propeller', 'onclick', 'adcash', 'exoclick', 
+                'popads', 'adsterra', 'monetag', 'propush', 'clickru', 'mgid',
+                'adbreak', 'adroll', 'adform', 'juicyads', 'admitad', 'popunder',
+                'clickhijack', 'setuppop', 'adblock', 'challenge', 'cloudflare'
+            ];
+            
+            for (const keyword of adKeywords) {
+                if (stackLower.includes(keyword)) {
+                    return true;
+                }
+            }
+            
+            const urlRegex = /https?:\/\/[^\s/]+/g;
+            let match;
+            const currentOrigin = globalThis.location.origin;
+            
+            const trustedScriptDomains = [
+                'google-analytics.com', 'googletagmanager.com', 'doubleclick.net', 
+                'google.com', 'google.co.in', 'youtube.com', 'facebook.net', 
+                'instagram.com', 'twitter.com', 'wikipedia.org', 'cloudflare.com',
+                'recaptcha.net', 'gstatic.com'
+            ];
+            
+            while ((match = urlRegex.exec(stack)) !== null) {
+                const matchedUrl = match[0];
+                const urlObj = new URL(matchedUrl);
+                const host = urlObj.hostname.toLowerCase();
+                
+                if (urlObj.origin !== currentOrigin) {
+                    const isTrusted = trustedScriptDomains.some(d => host === d || host.endsWith('.' + d));
+                    if (!isTrusted) {
+                        console.log('[K10C Stealth] Flagged untrusted third-party script in stack:', host);
+                        return true;
+                    }
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    const originalPreventDefault = Event.prototype.preventDefault;
+    Event.prototype.preventDefault = function() {
+        if (shouldBypassEventBlocker(this)) {
+            console.log('[K10C Stealth] Bypassed preventDefault call from ad script.');
+            return;
+        }
+        return originalPreventDefault.apply(this, arguments);
+    };
+    makeNative(Event.prototype.preventDefault, 'preventDefault');
+
+    const originalStopPropagation = Event.prototype.stopPropagation;
+    Event.prototype.stopPropagation = function() {
+        if (shouldBypassEventBlocker(this)) {
+            console.log('[K10C Stealth] Bypassed stopPropagation call from ad script.');
+            return;
+        }
+        return originalStopPropagation.apply(this, arguments);
+    };
+    makeNative(Event.prototype.stopPropagation, 'stopPropagation');
+
+    const originalStopImmediatePropagation = Event.prototype.stopImmediatePropagation;
+    Event.prototype.stopImmediatePropagation = function() {
+        if (shouldBypassEventBlocker(this)) {
+            console.log('[K10C Stealth] Bypassed stopImmediatePropagation call from ad script.');
+            return;
+        }
+        return originalStopImmediatePropagation.apply(this, arguments);
+    };
+    makeNative(Event.prototype.stopImmediatePropagation, 'stopImmediatePropagation');
+
+    // F. Hook window.open globally (check gesture and whitelist)
+    const originalWindowOpen = globalThis.open;
+    globalThis.open = function(url, name, specs) {
+        if (shouldBlockNavigation(url)) {
+            console.warn('[K10C Stealth] Blocked window.open to untrusted cross-origin URL:', url);
+            if (globalThis.ReactNativeWebView?.postMessage) {
+                globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'DEBUG_LOG',
+                    category: 'Popup',
+                    message: 'Blocked window.open redirect to: ' + String(url).substring(0, 50)
+                }));
+            }
+            return null;
+        }
+        
+        const timeSinceGesture = Date.now() - lastUserGestureTime;
+        if (timeSinceGesture > 1500) {
+            console.warn('[K10C Stealth] Blocked window.open due to lack of recent user gesture (' + timeSinceGesture + 'ms).');
+            if (globalThis.ReactNativeWebView?.postMessage) {
+                globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'DEBUG_LOG',
+                    category: 'Popup',
+                    message: 'Blocked window.open: no user gesture (' + timeSinceGesture + 'ms)'
+                }));
+            }
+            return null;
+        }
+        return originalWindowOpen.call(globalThis, url, name, specs);
+    };
+    makeNative(globalThis.open, 'open');
+
+    // G. Hook programmatic clicks and form submits to cross-origin untrusted domains
+    const originalAnchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function() {
+        if (shouldBlockNavigation(this.href)) {
+            console.warn('[K10C Stealth] Blocked programmatic click on anchor to untrusted domain:', this.href);
+            return;
+        }
+        return originalAnchorClick.apply(this, arguments);
+    };
+    makeNative(HTMLAnchorElement.prototype.click, 'click');
+
+    const originalFormSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function() {
+        if (shouldBlockNavigation(this.action)) {
+            console.warn('[K10C Stealth] Blocked programmatic form submit to untrusted domain:', this.action);
+            return;
+        }
+        return originalFormSubmit.apply(this, arguments);
+    };
+    makeNative(HTMLFormElement.prototype.submit, 'submit');
+
+    // H. Hook inline onclick properties to filter ad click events
+    const hookOnclickProperty = (proto) => {
+        try {
+            const desc = Object.getOwnPropertyDescriptor(proto, 'onclick');
+            if (!desc) return;
+            let localClick = desc.value || null;
+            Object.defineProperty(proto, 'onclick', {
+                get: function() { return localClick; },
+                set: function(val) {
+                    if (typeof val === 'function' && !isTrustedHost) {
+                        const valStr = val.toString();
+                        if (valStr.includes('popMagic') || valStr.includes('admaven') || valStr.includes('propeller')) {
+                            console.warn('[K10C Stealth] Blocked malicious inline onclick handler.');
+                            return;
+                        }
+                        const wrappedVal = function(e) {
+                            try {
+                                const res = val.apply(this, arguments);
+                                if (res === false && shouldBypassEventBlocker(e)) {
+                                    console.log('[K10C Stealth] Bypassed return false from inline ad handler.');
+                                    return true;
+                                }
+                                return res;
+                            } catch(err) {
+                                return val.apply(this, arguments);
+                            }
+                        };
+                        makeNative(wrappedVal, 'onclick');
+                        localClick = wrappedVal;
+                    } else {
+                        localClick = val;
+                    }
+                },
+                configurable: true,
+                enumerable: desc.enumerable
+            });
+        } catch(e) {}
+    };
+    hookOnclickProperty(HTMLElement.prototype);
+    hookOnclickProperty(Document.prototype);
+    hookOnclickProperty(Window.prototype);
+
+    // I. Inject cosmetic styles and request domain selectors
+    try {
+        const style = document.createElement('style');
+        style.id = 'k10c-cosmetic-styles';
+        if (document.documentElement) {
+            document.documentElement.appendChild(style);
+        } else {
+            document.addEventListener('DOMContentLoaded', () => {
+                document.documentElement.appendChild(style);
+            });
+        }
+    } catch(e) {}
+
+    try {
+        if (globalThis.ReactNativeWebView?.postMessage) {
+            globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'GET_COSMETIC_RULES',
+                hostname: globalThis.location.hostname
+            }));
+        }
+    } catch(e) {}
+
+    // J. Video Sniffer Hooks
+    const visibleVideosRegistry = [];
+    let lastNotifiedUrl = null;
+
+    function registerActiveVideo(el) {
+        if (!el) return;
+        if (isTrustedHost) return;
+        
+        const obs = globalThis.K10CActiveVideoObserver;
+        if (obs) {
+            obs.observe(el);
+        } else {
+            globalThis.K10CPendingVideos = globalThis.K10CPendingVideos || [];
+            if (globalThis.K10CPendingVideos.indexOf(el) === -1) {
+                globalThis.K10CPendingVideos.push(el);
+            }
+        }
+    }
+
+    globalThis.K10CForceResniff = function() {
+        lastNotifiedUrl = null;
+        let maxRatio = 0.0;
+        let targetVideo = null;
+        for (const item of visibleVideosRegistry) {
+            if (item.ratio > maxRatio) {
+                maxRatio = item.ratio;
+                targetVideo = item.element;
+            }
+        }
+        if (targetVideo && maxRatio >= 0.5) {
+            if (isValidVideoElement(targetVideo)) {
+                const currentSrcUrl = targetVideo.currentSrc || targetVideo.src;
+                if (currentSrcUrl && !currentSrcUrl.startsWith('blob:')) {
+                    notifySniff(currentSrcUrl, 'Force_Resniff', false);
+                }
+            }
+        }
+    };
+
+    function notifySniff(videoUrl, vectorSource, force) {
+        if (!videoUrl || typeof videoUrl !== 'string') return;
+        if (videoUrl.startsWith('blob:')) return;
+        
+        const lower = videoUrl.toLowerCase();
+        const isNoise = lower.includes('.ts') || 
+                        lower.includes('.m4s') || 
+                        lower.includes('.aac') || 
+                        lower.includes('.mp3') || 
+                        lower.includes('/segment/') || 
+                        lower.includes('/chunk/') || 
+                        lower.includes('/ad/') ||
+                        lower.includes('range=');
+
+        if (isNoise && !force) return;
+        if (lastNotifiedUrl === videoUrl) return;
+        lastNotifiedUrl = videoUrl;
+
+        const isMedia = lower.includes('.mp4') || 
+                        lower.includes('.m3u8') || 
+                        lower.includes('.mpd') || 
+                        lower.includes('googlevideo.com') || 
+                        lower.includes('instagram.com/o1/') ||
+                        lower.includes('mime=video') ||
+                        lower.includes('video/');
+        
+        if (!isMedia && !force) return;
+
+        let shortId = '';
+        try {
+            const cleanUrl = videoUrl.split('?')[0];
+            shortId = btoa(cleanUrl).slice(-8).replace(/[^a-zA-Z0-9]/g, 'x');
+        } catch(e) {
+            shortId = Math.random().toString(36).substring(2, 10);
+        }
+
+        const msg = JSON.stringify({
+            type: 'VIDEO_SNIFFED',
+            id: shortId,
+            url: videoUrl,
+            title: document.title || 'Sniffed Media',
+            vector: vectorSource
+        });
+        
+        if (globalThis.ReactNativeWebView?.postMessage) {
+            globalThis.ReactNativeWebView.postMessage(msg);
+        }
+    }
+
+    function isValidVideoElement(element) {
+        if (!element) return false;
+        const width = element.clientWidth || 0;
+        const height = element.clientHeight || 0;
+        const area = width * height;
+
+        if (area > 0 && area < 14400) {
+            return false;
+        }
+
+        const isSmall = (area > 0 && area < 90000) || (width > 0 && width < 300) || (height > 0 && height < 300);
+        if (element.muted && element.loop && isSmall) {
+            return false;
+        }
+        if (element.autoplay && !element.controls && element.muted && isSmall) {
+            return false;
+        }
+
+        try {
+            let parent = element.parentElement;
+            let levels = 0;
+            while (parent && levels < 4) {
+                const classAndId = ((parent.className || '') + ' ' + (parent.id || '')).toLowerCase();
+                const isYoutubeMoviePlayer = classAndId.includes('movie_player') || classAndId.includes('movie-player');
+                if (!isYoutubeMoviePlayer && (
+                    classAndId.includes('preview') ||
+                    classAndId.includes('thumbnail') ||
+                    classAndId.includes('teaser') ||
+                    classAndId.includes('banner') ||
+                    classAndId.includes('ad-') ||
+                    classAndId.includes('ads') ||
+                    classAndId.includes('sponsor')
+                )) {
+                    return false;
+                }
+                parent = parent.parentElement;
+                levels++;
+            }
+        } catch (e) {}
+
+        return true;
+    }
+
+    function updateVideoRatio(element, ratio, isIntersecting) {
+        for (let i = visibleVideosRegistry.length - 1; i >= 0; i--) {
+            if (visibleVideosRegistry[i].element === element) {
+                visibleVideosRegistry.splice(i, 1);
+            }
+        }
+        
+        if (isIntersecting && ratio > 0) {
+            visibleVideosRegistry.push({ element, ratio });
+        }
+
+        let maxRatio = 0.0;
+        let targetVideo = null;
+
+        for (const item of visibleVideosRegistry) {
+            if (item.ratio > maxRatio) {
+                maxRatio = item.ratio;
+                targetVideo = item.element;
+            }
+        }
+
+        if (targetVideo && maxRatio >= 0.5) {
+            if (isValidVideoElement(targetVideo)) {
+                const currentSrcUrl = targetVideo.currentSrc || targetVideo.src;
+                if (currentSrcUrl && !currentSrcUrl.startsWith('blob:')) {
+                    notifySniff(currentSrcUrl, 'Viewport_Intersection_Observer', false);
+                }
+            }
+        } else {
+            lastNotifiedUrl = null;
+        }
+    }
+
+    try {
+        const activeVideoObserver = new IntersectionObserver(entries => {
+            for (const entry of entries) {
+                updateVideoRatio(entry.target, entry.intersectionRatio, entry.isIntersecting);
+            }
+        }, {
+            root: null,
+            rootMargin: '0px',
+            threshold: [0.0, 0.25, 0.5, 0.75, 1.0]
+        });
+        globalThis.K10CActiveVideoObserver = activeVideoObserver;
+        
+        globalThis.K10CPendingVideos = globalThis.K10CPendingVideos || [];
+        if (globalThis.K10CPendingVideos.length > 0) {
+            if (!isTrustedHost) {
+                for (const pendingVideo of globalThis.K10CPendingVideos) {
+                    activeVideoObserver.observe(pendingVideo);
+                }
+            }
+            globalThis.K10CPendingVideos = [];
+        }
+    } catch (e) {}
+
+    // Blob serialization hook
+    try {
+        const originalCreateObjectURL = URL.createObjectURL;
+        const sniffedRegistry = {};
+        URL.createObjectURL = function(blob) {
+            const objectUrl = originalCreateObjectURL.call(URL, blob);
+            
+            if (!isTrustedHost && blob && blob.type && blob.size && blob.size < 15 * 1024 * 1024 &&
+                (blob.type.includes('video') || blob.type.includes('mpegurl') || blob.type.includes('mp4'))) {
+                
+                if (sniffedRegistry[objectUrl]) return objectUrl;
+                sniffedRegistry[objectUrl] = true;
+
+                const reader = new FileReader();
+                reader.onloadend = function() {
+                    const base64Data = reader.result.split(',')[1];
+                    let shortId = '';
+                    try {
+                        const cleanUrl = objectUrl.split('?')[0];
+                        shortId = btoa(cleanUrl).slice(-8).replace(/[^a-zA-Z0-9]/g, 'x');
+                    } catch(e) {
+                        shortId = Math.random().toString(36).substring(2, 10);
+                    }
+
+                    const msg = JSON.stringify({
+                        type: 'VIDEO_SNIFFED',
+                        id: shortId,
+                        url: objectUrl,
+                        title: document.title || 'Sniffed Media',
+                        vector: 'URL_createObjectURL_Blob',
+                        blobData: base64Data,
+                        blobType: blob.type
+                    });
+                    
+                    if (globalThis.ReactNativeWebView?.postMessage) {
+                        globalThis.ReactNativeWebView.postMessage(msg);
+                    }
+                };
+                reader.readAsDataURL(blob);
+            }
+            return objectUrl;
+        };
+        makeNative(URL.createObjectURL, 'createObjectURL');
+    } catch (e) {}
+
+    // Hook media element properties
+    try {
+        const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+        if (srcDescriptor) {
+            Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+                get: function() { return srcDescriptor.get.call(this); },
+                set: function(val) {
+                    srcDescriptor.set.call(this, val);
+                    registerActiveVideo(this);
+                },
+                configurable: true,
+                enumerable: true
+            });
+        }
+
+        const srcObjDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+        if (srcObjDescriptor) {
+            Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+                get: function() { return srcObjDescriptor.get.call(this); },
+                set: function(val) {
+                    srcObjDescriptor.set.call(this, val);
+                    registerActiveVideo(this);
+                },
+                configurable: true,
+                enumerable: true
+            });
+        }
+    } catch (e) {}
+
+    try {
+        const sourceSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLSourceElement.prototype, 'src');
+        if (sourceSrcDescriptor) {
+            Object.defineProperty(HTMLSourceElement.prototype, 'src', {
+                get: function() { return sourceSrcDescriptor.get.call(this); },
+                set: function(val) {
+                    sourceSrcDescriptor.set.call(this, val);
+                    if (this.parentNode && this.parentNode.tagName === 'VIDEO') {
+                        registerActiveVideo(this.parentNode);
+                    }
+                },
+                configurable: true,
+                enumerable: true
+            });
+        }
+    } catch (e) {}
+
+    try {
+        const originalPlay = HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play = function() {
+            registerActiveVideo(this);
+            return originalPlay.apply(this, arguments);
+        };
+        makeNative(HTMLMediaElement.prototype.play, 'play');
+    } catch (e) {}
+
+    // Closed Shadow DOM override
+    try {
+        const originalAttachShadow = Element.prototype.attachShadow;
+        Element.prototype.attachShadow = function(initOptions) {
+            if (initOptions && initOptions.mode === 'closed') {
+                initOptions.mode = 'open';
+            }
+            const shadowRoot = originalAttachShadow.call(this, initOptions);
+            if (shadowRoot) {
+                const shadowObserver = new MutationObserver(mutations => {
+                    for (const mutation of mutations) {
+                        if (mutation.addedNodes) {
+                            for (const node of mutation.addedNodes) {
+                                if (node.nodeName === 'VIDEO' || node.nodeName === 'AUDIO') {
+                                    registerActiveVideo(node);
+                                } else if (node.nodeName === 'SOURCE') {
+                                    if (node.parentNode && node.parentNode.nodeName === 'VIDEO') {
+                                        registerActiveVideo(node.parentNode);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                shadowObserver.observe(shadowRoot, { childList: true, subtree: true });
+
+                setTimeout(() => {
+                    try {
+                        const videos = shadowRoot.querySelectorAll('video');
+                        for (const video of videos) {
+                            registerActiveVideo(video);
+                        }
+                    } catch(e) {}
+                }, 100);
+            }
+            return shadowRoot;
+        };
+        makeNative(Element.prototype.attachShadow, 'attachShadow');
+    } catch (e) {}
+
+    // K. Media Playback Event Monitoring & Background Notification Sync
+    try {
+        let activeMediaElement = null;
+        let lastPostedState = null;
+        let lastPostedMediaSrc = null;
+        let lastPostedTitle = null;
+        let lastPostedDuration = null;
+
+        let lastBridgeState = null;
+        let lastBridgeTitle = null;
+        let lastBridgeDuration = null;
+        let lastBridgePosition = null;
+        let lastBridgeTime = 0;
+
+        const notifyMediaState = function(el, state) {
+            if (!el) return;
+            activeMediaElement = el;
+            globalThis.K10CActiveMediaElement = el;
+            
+            let title = document.title || 'Sniffed Media';
+            if (globalThis.location.hostname.includes('youtube.com')) {
+                const ytTitleEl = document.querySelector('h1.media-item-title') || document.querySelector('.ytp-title-link') || document.querySelector('.slim-video-metadata-title');
+                if (ytTitleEl) {
+                    title = ytTitleEl.textContent || title;
+                }
+            }
+
+            let artworkUrl = '';
+            try {
+                const ogImg = document.querySelector('meta[property="og:image"]');
+                if (ogImg && ogImg.content) {
+                    artworkUrl = ogImg.content;
+                } else {
+                    const linkImg = document.querySelector('link[rel="image_src"]');
+                    if (linkImg && linkImg.href) artworkUrl = linkImg.href;
+                }
+                if (!artworkUrl && globalThis.location.hostname.includes('youtube.com')) {
+                    const urlParams = new URLSearchParams(globalThis.location.search);
+                    const videoId = urlParams.get('v');
+                    if (videoId) {
+                        artworkUrl = 'https://img.youtube.com/vi/' + videoId + '/hqdefault.jpg';
+                    }
+                }
+            } catch(e) {}
+
+            const cleanTitle = title.trim();
+            const isPlaceholderTitle = cleanTitle === '' || cleanTitle === '- YouTube' || cleanTitle === 'YouTube' || cleanTitle === 'Sniffed Media';
+            const isInvalidDuration = !el.duration || isNaN(el.duration) || el.duration <= 0;
+            if (isPlaceholderTitle && isInvalidDuration && state !== 'ended') {
+                return;
+            }
+
+            const curTime = Date.now();
+            let shouldBridge = false;
+            if (state !== lastBridgeState || title.trim() !== lastBridgeTitle || Math.abs((el.duration || 0) - (lastBridgeDuration || 0)) > 1) {
+                shouldBridge = true;
+            } else if (lastBridgeTime > 0) {
+                const elapsedSec = state === 'playing' ? (curTime - lastBridgeTime) / 1000 : 0;
+                const expectedPos = lastBridgePosition + elapsedSec;
+                const drift = Math.abs((el.currentTime || 0) - expectedPos);
+                if (drift > 3) {
+                    shouldBridge = true;
+                }
+            }
+
+            if (shouldBridge || state === 'ended' || state === 'stopped') {
+                lastBridgeState = state;
+                lastBridgeTitle = title.trim();
+                lastBridgeDuration = el.duration || 0;
+                lastBridgePosition = el.currentTime || 0;
+                lastBridgeTime = curTime;
+
+                if (globalThis.K10CAudioBridge?.notifyMediaState) {
+                    try {
+                        globalThis.K10CAudioBridge.notifyMediaState(
+                            state,
+                            title.trim(),
+                            el.duration || 0,
+                            el.currentTime || 0,
+                            artworkUrl
+                        );
+                    } catch(err) {}
+                }
+            }
+
+            const mediaSrc = el.currentSrc || el.src || '';
+            const isTransition = state !== lastPostedState || 
+                                 mediaSrc !== lastPostedMediaSrc || 
+                                 title.trim() !== lastPostedTitle || 
+                                 Math.abs((el.duration || 0) - (lastPostedDuration || 0)) > 1;
+            if (isTransition || state === 'ended') {
+                lastPostedState = state;
+                lastPostedMediaSrc = mediaSrc;
+                lastPostedTitle = title.trim();
+                lastPostedDuration = el.duration || 0;
+
+                const msg = JSON.stringify({
+                    type: 'MEDIA_STATE_CHANGED',
+                    state: state,
+                    title: title.trim(),
+                    duration: el.duration || 0,
+                    position: el.currentTime || 0,
+                    artworkUrl: artworkUrl
+                });
+                if (globalThis.ReactNativeWebView?.postMessage) {
+                    globalThis.ReactNativeWebView.postMessage(msg);
+                }
+            }
+        };
+
+        document.addEventListener('play', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, 'playing');
+            }
+        }, true);
+
+        document.addEventListener('pause', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, 'paused');
+            }
+        }, true);
+
+        document.addEventListener('ended', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, 'ended');
+            }
+        }, true);
+
+        document.addEventListener('loadedmetadata', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, e.target.paused ? 'paused' : 'playing');
+            }
+        }, true);
+
+        document.addEventListener('durationchange', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, e.target.paused ? 'paused' : 'playing');
+            }
+        }, true);
+
+        document.addEventListener('playing', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, 'playing');
+            }
+        }, true);
+
+        document.addEventListener('canplay', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, e.target.paused ? 'paused' : 'playing');
+            }
+        }, true);
+
+        document.addEventListener('seeked', e => {
+            if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                notifyMediaState(e.target, e.target.paused ? 'paused' : 'playing');
+            }
+        }, true);
+
+        setInterval(() => {
+            if (activeMediaElement && !activeMediaElement.paused) {
+                notifyMediaState(activeMediaElement, 'playing');
+            }
+        }, 3000);
+
+        try {
+            const titleEl = document.querySelector('title');
+            if (titleEl) {
+                const titleObserver = new MutationObserver(() => {
+                    if (activeMediaElement) {
+                        notifyMediaState(activeMediaElement, activeMediaElement.paused ? 'paused' : 'playing');
+                    }
+                });
+                titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+            }
+        } catch(err) {}
+
+        const scanPlayingMedia = function() {
+            try {
+                const allMedia = document.querySelectorAll('video, audio');
+                for (const mediaItem of allMedia) {
+                    if (mediaItem && !mediaItem.paused) {
+                        notifyMediaState(mediaItem, 'playing');
+                        break;
+                    }
+                }
+            } catch(err) {}
+        };
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', scanPlayingMedia);
+        } else {
+            scanPlayingMedia();
+        }
+    } catch (e) {}
+
+    // L. Standard DOM Mutation Observer for generic styling & dynamic videos
+    try {
+        const observer = new MutationObserver(mutations => {
+            for (const mutation of mutations) {
+                if (mutation.addedNodes) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.tagName === 'VIDEO') {
+                            registerActiveVideo(node);
+                        } else if (node.tagName === 'SOURCE') {
+                            if (node.parentNode && node.parentNode.tagName === 'VIDEO') {
+                                registerActiveVideo(node.parentNode);
+                            }
+                        } else if (node.tagName === 'STYLE') {
+                            try {
+                                const sheetText = node.textContent || '';
+                                if (sheetText.includes('body') && sheetText.includes('overflow') && sheetText.includes('hidden')) {
+                                    node.textContent = sheetText.replace(/body\s*{[^}]*overflow\s*:\s*hidden[^}]*}/gi, '');
+                                    console.log('[K10C Stealth] Neutralized scroll lock in dynamic style element.');
+                                }
+                            } catch(err) {}
+                        } else if (node.tagName === 'IFRAME') {
+                            try {
+                                if (!node.hasAttribute('sandbox')) {
+                                    node.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+                                    console.log('[K10C Stealth] Sandboxed dynamic iframe.');
+                                    if (globalThis.ReactNativeWebView?.postMessage) {
+                                        globalThis.ReactNativeWebView.postMessage(JSON.stringify({
+                                            type: 'DEBUG_LOG',
+                                            category: 'Blocker',
+                                            message: 'Sandboxed dynamic iframe'
+                                        }));
+                                    }
+                                }
+                            } catch(err) {}
+                        }
+                    }
+                }
+            }
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) {}
+
+    // DOM Scanner fallback
+    setInterval(() => {
+        if (isTrustedHost) return;
+        try {
+            const videos = document.getElementsByTagName('video');
+            for (const video of videos) {
+                registerActiveVideo(video);
+            }
+        } catch (e) {}
+    }, 2000);
+
+    function scanInitialVideos() {
+        if (isTrustedHost) return;
+        try {
+            const initialVideos = document.querySelectorAll('video');
+            for (const video of initialVideos) {
+                registerActiveVideo(video);
+            }
+        } catch(e) {}
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scanInitialVideos);
+    } else {
+        scanInitialVideos();
+    }
+
+    // M. Generic Cosmetic Overlay Buster
+    function deconstructOverlays() {
+        try {
+            const genericSelectors = [
+                "div[class*='ad-banner']", ".ytp-ad-overlay-container", 
+                "div[id*='cookie-consent']", ".modal-overlay-backdrop"
+            ];
+            const selectorString = genericSelectors.join(', ');
+            const nodes = document.querySelectorAll(selectorString);
+            for (const node of nodes) {
+                if (node.style.display !== 'none') {
+                    node.style.setProperty('display', 'none', 'important');
+                }
+            }
+        } catch(e) {}
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', deconstructOverlays);
+    } else {
+        deconstructOverlays();
+    }
+
     console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
     // test comment to verify decoupled updates
 })();
