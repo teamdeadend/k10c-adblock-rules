@@ -488,10 +488,37 @@
         }
     }
 
+    function handleFetchedResponse(response, urlStr) {
+        const clonedResponse = response.clone();
+        return clonedResponse.text()
+            .then(function(jsonText) {
+                try {
+                    const obj = JSON.parse(jsonText);
+                    const result = sanitizePlayerResponse(obj);
+                    if (result.modified) {
+                        console.log('[K10C YouTube Shield Fetch] Successfully sanitized InnerTube response: ' + urlStr);
+                        return new Response(JSON.stringify(result.obj), {
+                            status: response.status,
+                            statusText: response.statusText || 'OK',
+                            headers: response.headers
+                        });
+                    }
+                } catch (e) {
+                    handleError(e);
+                }
+                return response;
+            })
+            .catch(function(e) {
+                handleError(e);
+                return response;
+            });
+    }
+
     function trapFetch() {
         if (globalThis.fetch) {
             const originalFetch = globalThis.fetch;
-            globalThis.fetch = async function(...args) {
+            globalThis.fetch = function() {
+                const args = arguments;
                 const url = args[0];
                 let urlStr = '';
                 if (typeof url === 'string') {
@@ -509,27 +536,11 @@
                 if (urlStr.includes('youtubei/v1/player') ||
                     urlStr.includes('youtubei/v1/next') ||
                     urlStr.includes('youtubei/v1/get_watch')) {
-                    const response = await originalFetch(...args);
-                    const clonedResponse = response.clone();
-                    try {
-                        const jsonText = await clonedResponse.text();
-                        const obj = JSON.parse(jsonText);
-                        let result = sanitizePlayerResponse(obj);
-                        if (result.modified) {
-                            console.log('[K10C YouTube Shield Fetch] Successfully sanitized InnerTube response: ' + urlStr);
-                            return new Response(JSON.stringify(result.obj), {
-                                status: response.status,
-                                statusText: response.statusText || 'OK',
-                                headers: response.headers
-                            });
-                        }
-                        return response;
-                    } catch (e) {
-                        handleError(e);
-                        return response;
-                    }
+                    return originalFetch.apply(this, args).then(function(response) {
+                        return handleFetchedResponse(response, urlStr);
+                    });
                 }
-                return originalFetch(...args);
+                return originalFetch.apply(this, args);
             };
             makeNative(globalThis.fetch, 'fetch');
         }
@@ -1790,39 +1801,46 @@
         console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
     }
 
-    async function unregisterServiceWorkers() {
-        if (!navigator.serviceWorker) return;
-        try {
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            if (!registrations || registrations.length === 0) return;
-            
-            const promises = registrations.map(reg => reg.unregister());
-            const results = await Promise.all(promises);
-            
-            if (results.some(Boolean)) {
-                console.log('[K10C YouTube Shield] Service Worker unregistered.');
-                await clearCacheStorage();
+    function unregisterServiceWorkers(serviceWorkerObj) {
+        if (!serviceWorkerObj || typeof serviceWorkerObj.getRegistrations !== 'function') return;
+        serviceWorkerObj.getRegistrations()
+            .then(function(registrations) {
+                if (!registrations || registrations.length === 0) return;
                 
-                const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
-                if (!hasReloaded) {
-                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
-                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
-                    globalThis.location.reload();
-                }
-            }
-        } catch (e) {
-            handleError(e);
-        }
+                const promises = registrations.map(function(reg) {
+                    return reg.unregister();
+                });
+                
+                Promise.all(promises)
+                    .then(function(results) {
+                        if (results.some(Boolean)) {
+                            console.log('[K10C YouTube Shield] Service Worker unregistered.');
+                            clearCacheStorage();
+                            
+                            const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
+                            if (!hasReloaded) {
+                                sessionStorage.setItem('k10c_sw_reloaded', 'true');
+                                console.log('[K10C YouTube Shield] Reloading to apply bypass...');
+                                globalThis.location.reload();
+                            }
+                        }
+                    })
+                    .catch(handleError);
+            })
+            .catch(handleError);
     }
 
-    async function clearCacheStorage() {
+    function clearCacheStorage() {
         if (!globalThis.caches || typeof globalThis.caches.keys !== 'function') return;
-        try {
-            const keys = await globalThis.caches.keys();
-            await Promise.all(keys.map(key => globalThis.caches.delete(key)));
-        } catch (e) {
-            handleError(e);
-        }
+        globalThis.caches.keys()
+            .then(function(keys) {
+                if (keys && keys.length > 0) {
+                    Promise.all(keys.map(function(key) { 
+                        return globalThis.caches.delete(key); 
+                    })).catch(handleError);
+                }
+            })
+            .catch(handleError);
     }
 
     function mockServiceWorkerPrototypes() {
@@ -1844,13 +1862,21 @@
         }
     }
 
-    async function initializeServiceWorkerBypass() {
-        await unregisterServiceWorkers();
+    function initializeServiceWorkerBypass() {
+        let originalServiceWorker = null;
+        try {
+            originalServiceWorker = navigator.serviceWorker;
+        } catch (e) {
+            handleError(e);
+        }
+
         mockServiceWorkerPrototypes();
+
+        if (originalServiceWorker) {
+            unregisterServiceWorkers(originalServiceWorker);
+        }
     }
 
     // Launch Engine
     initializeStealthEngine();
 })();
-
-// Delta Sync Test Comment
