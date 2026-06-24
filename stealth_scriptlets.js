@@ -1743,6 +1743,47 @@
     // =========================================================================
     // MAIN ENGINE INITIALIZATION ENTRY POINT
     // =========================================================================
+    function applyDocumentVisibilityBypasses() {
+        try { lockProperty(Document.prototype, 'hidden', false); } catch (e) { handleError(e); }
+        try { lockProperty(Document.prototype, 'visibilityState', 'visible'); } catch (e) { handleError(e); }
+        try { lockProperty(Document.prototype, 'webkitHidden', false); } catch (e) { handleError(e); }
+        try { lockProperty(Document.prototype, 'webkitVisibilityState', 'visible'); } catch (e) { handleError(e); }
+    }
+
+    function applyYtBypasses() {
+        try { trapYtPlayer(); } catch (e) { handleError(e); }
+        try { trapYtCfg(); } catch (e) { handleError(e); }
+        try { trapFetch(); } catch (e) { handleError(e); }
+        try { trapXhr(); } catch (e) { handleError(e); }
+        try { setupYtAdSkipper(); } catch (e) { handleError(e); }
+    }
+
+    function applyNavigationAndClickBypasses() {
+        try { setupClickjackingBuster(); } catch (e) { handleError(e); }
+        try { setupLinkClickHijackInterceptor(); } catch (e) { handleError(e); }
+        try { setupEventPropagationTraps(); } catch (e) { handleError(e); }
+        try { trapWindowOpen(); } catch (e) { handleError(e); }
+        try { trapProgrammaticClicksAndSubmits(); } catch (e) { handleError(e); }
+    }
+
+    function applyClickHooks() {
+        try { hookOnclickProperty(HTMLElement.prototype); } catch (e) { handleError(e); }
+        try { hookOnclickProperty(Document.prototype); } catch (e) { handleError(e); }
+        try { hookOnclickProperty(Window.prototype); } catch (e) { handleError(e); }
+    }
+
+    function applyMediaAndDomBypasses() {
+        try { setupCosmeticStyles(); } catch (e) { handleError(e); }
+        try { setupVideoSnifferObserver(); } catch (e) { handleError(e); }
+        try { trapCreateObjectURL(); } catch (e) { handleError(e); }
+        try { trapMediaElementProperties(); } catch (e) { handleError(e); }
+        try { trapAttachShadow(); } catch (e) { handleError(e); }
+        try { setupPlaybackMonitoringListeners(); } catch (e) { handleError(e); }
+        try { setupMutationObserverAndScanner(); } catch (e) { handleError(e); }
+        try { setupDOMScannerFallback(); } catch (e) { handleError(e); }
+        try { setupCosmeticOverlayBuster(); } catch (e) { handleError(e); }
+    }
+
     function initializeStealthEngine() {
         try {
             const currentHost = globalThis.location.hostname;
@@ -1760,43 +1801,13 @@
             isTrustedHost = false;
         }
 
-        initializeServiceWorkerBypass();
+        try { initializeServiceWorkerBypass(); } catch (e) { handleError(e); }
         
-        lockProperty(Document.prototype, 'hidden', false);
-        lockProperty(Document.prototype, 'visibilityState', 'visible');
-        lockProperty(Document.prototype, 'webkitHidden', false);
-        lockProperty(Document.prototype, 'webkitVisibilityState', 'visible');
-
-        trapAddEventListener();
-        trapAdsByGoogle();
-        trapMediaPause();
-        trapElementDimensions();
-        
-        trapYtPlayer();
-        trapYtCfg();
-        trapFetch();
-        trapXhr();
-        setupYtAdSkipper();
-
-        setupClickjackingBuster();
-        setupLinkClickHijackInterceptor();
-        setupEventPropagationTraps();
-        trapWindowOpen();
-        trapProgrammaticClicksAndSubmits();
-        
-        hookOnclickProperty(HTMLElement.prototype);
-        hookOnclickProperty(Document.prototype);
-        hookOnclickProperty(Window.prototype);
-
-        setupCosmeticStyles();
-        setupVideoSnifferObserver();
-        trapCreateObjectURL();
-        trapMediaElementProperties();
-        trapAttachShadow();
-        setupPlaybackMonitoringListeners();
-        setupMutationObserverAndScanner();
-        setupDOMScannerFallback();
-        setupCosmeticOverlayBuster();
+        applyDocumentVisibilityBypasses();
+        applyYtBypasses();
+        applyNavigationAndClickBypasses();
+        applyClickHooks();
+        applyMediaAndDomBypasses();
 
         console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
     }
@@ -1845,16 +1856,36 @@
 
     function mockServiceWorkerPrototypes() {
         try {
+            const mockServiceWorkerContainer = {
+                register: function() {
+                    return Promise.resolve({
+                        scope: '/',
+                        unregister: function() { return Promise.resolve(true); },
+                        update: function() { return Promise.resolve(); },
+                        addEventListener: function() {},
+                        removeEventListener: function() {}
+                    });
+                },
+                addEventListener: function() {},
+                removeEventListener: function() {},
+                getRegistration: function() { return Promise.resolve(undefined); },
+                getRegistrations: function() { return Promise.resolve([]); },
+                get ready() {
+                    return new Promise(function() {});
+                },
+                controller: null
+            };
+
             if (globalThis.Navigator?.prototype) {
                 Object.defineProperty(globalThis.Navigator.prototype, 'serviceWorker', {
-                    get: function() { return undefined; },
-                    configurable: false,
+                    get: function() { return mockServiceWorkerContainer; },
+                    configurable: true,
                     enumerable: true
                 });
             }
             Object.defineProperty(navigator, 'serviceWorker', {
-                get: function() { return undefined; },
-                configurable: false,
+                get: function() { return mockServiceWorkerContainer; },
+                configurable: true,
                 enumerable: true
             });
         } catch (e) {
