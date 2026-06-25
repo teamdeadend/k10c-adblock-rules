@@ -997,12 +997,23 @@
         return window.innerWidth > window.innerHeight;
     }
 
+    function findClosest(el, selector) {
+        let current = el;
+        while (current) {
+            if (current.matches?.(selector)) {
+                return current;
+            }
+            current = current.parentNode || current.host;
+        }
+        return null;
+    }
+
     function resolveTargetContext(element) {
         if (!element) return 'PAGE';
-        if (element.closest('ytm-watch-metadata-renderer') || element.closest('.ytm-watch-metadata') || element.closest('#watch-header') || element.closest('#watch-metadata-app-promo-renderer')) {
+        if (findClosest(element, 'ytm-watch-metadata-renderer, .ytm-watch-metadata, #watch-header, #watch-metadata-app-promo-renderer, [class*="slim-video"], [class*="video-information"]')) {
             return 'METADATA';
         }
-        if (element.closest('.html5-video-player') || element.closest('ytm-player') || element.closest('ytm-player-view-model') || element.closest('.video-player')) {
+        if (findClosest(element, 'video, .html5-video-player, ytm-player, ytm-player-view-model, .video-player, [class*="player-control"], [class*="ytp-"]')) {
             return 'PLAYER';
         }
         return 'PAGE';
