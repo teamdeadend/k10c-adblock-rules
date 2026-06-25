@@ -254,10 +254,13 @@
                     return;
                 }
                 if (type === 'blur') {
-                    // Wrap blur events to prevent defocus checks from pausing playback
-                    listener = function(event) {
-                        // Suppress defocus execution callbacks by doing nothing
-                    };
+                    if (globalThis.location.hostname.includes('youtube.com') && 
+                        (this === globalThis || this === document || this === document.body || (this && typeof this.className === 'string' && this.className.includes('video-player')))) {
+                        // Wrap blur events to prevent defocus checks from pausing playback on YouTube
+                        listener = function(event) {
+                            // Suppress defocus execution callbacks on player elements by doing nothing
+                        };
+                    }
                 }
                 return originalAddEventListener.call(this, type, listener, options);
             };
@@ -357,6 +360,11 @@
 
     function trapElementDimensions() {
         try {
+            const isAdIdentifier = function(str) {
+                if (!str || typeof str !== 'string') return false;
+                return /\bads?\b|[-_]ads?\b|\bads?[-_]|sponsored/i.test(str);
+            };
+
             const originalGetClientRects = Element.prototype.getClientRects;
             const originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
             const originalOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
@@ -364,7 +372,7 @@
             Element.prototype.getClientRects = function() {
                 const id = this.getAttribute('id') || '';
                 const className = this.getAttribute('class') || '';
-                if (id.includes('ad') || className.includes('ad') || className.includes('sponsored')) {
+                if (isAdIdentifier(id) || isAdIdentifier(className)) {
                     const fakeDOMRect = {
                         bottom: 250,
                         height: 250,
@@ -390,7 +398,7 @@
                     get: function() {
                         const id = this.getAttribute('id') || '';
                         const className = this.getAttribute('class') || '';
-                        if (id.includes('ad') || className.includes('ad') || className.includes('sponsored')) {
+                        if (isAdIdentifier(id) || isAdIdentifier(className)) {
                             return 250;
                         }
                         return originalOffsetHeight.get.call(this);
@@ -402,7 +410,7 @@
                     get: function() {
                         const id = this.getAttribute('id') || '';
                         const className = this.getAttribute('class') || '';
-                        if (id.includes('ad') || className.includes('ad') || className.includes('sponsored')) {
+                        if (isAdIdentifier(id) || isAdIdentifier(className)) {
                             return 300;
                         }
                         return originalOffsetWidth.get.call(this);
@@ -691,11 +699,17 @@
                         let result = sanitizePlayerResponse(obj);
                         if (result.modified) {
                             console.log('[K10C YouTube Shield Fetch] Successfully sanitized InnerTube response: ' + urlStr);
-                            return new Response(JSON.stringify(result.obj), {
+                            const newResponse = new Response(JSON.stringify(result.obj), {
                                 status: response.status,
                                 statusText: response.statusText || 'OK',
                                 headers: response.headers
                             });
+                            Object.defineProperty(newResponse, 'url', {
+                                value: response.url,
+                                writable: false,
+                                configurable: true
+                            });
+                            return newResponse;
                         }
                         return response;
                     } catch (e) {
