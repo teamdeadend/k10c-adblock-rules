@@ -536,22 +536,33 @@
 
     function trapYtPlayer() {
         let originalPlayerResponse = globalThis.ytInitialPlayerResponse;
-        Object.defineProperty(globalThis, 'ytInitialPlayerResponse', {
-            get: () => originalPlayerResponse,
-            set: (val) => {
-                if (val) {
-                    let result = sanitizePlayerResponse(val);
-                    if (result.modified) {
-                        console.log('[K10C YouTube Shield] Sanitized window.ytInitialPlayerResponse properties.');
-                    }
-                    originalPlayerResponse = result.obj;
-                } else {
-                    originalPlayerResponse = val;
+        const descResponse = Object.getOwnPropertyDescriptor(globalThis, 'ytInitialPlayerResponse');
+        if (!descResponse || descResponse.configurable) {
+            try {
+                Object.defineProperty(globalThis, 'ytInitialPlayerResponse', {
+                    get: () => originalPlayerResponse,
+                    set: (val) => {
+                        if (val) {
+                            let result = sanitizePlayerResponse(val);
+                            if (result.modified) {
+                                console.log('[K10C YouTube Shield] Sanitized window.ytInitialPlayerResponse properties.');
+                            }
+                            originalPlayerResponse = result.obj;
+                        } else {
+                            originalPlayerResponse = val;
+                        }
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            } catch (e) {
+                console.warn('[K10C Stealth] Failed to define ytInitialPlayerResponse. Patching directly.', e);
+                if (globalThis.ytInitialPlayerResponse) {
+                    let result = sanitizePlayerResponse(globalThis.ytInitialPlayerResponse);
+                    globalThis.ytInitialPlayerResponse = result.obj;
                 }
-            },
-            configurable: true,
-            enumerable: true
-        });
+            }
+        }
         if (originalPlayerResponse) {
             let result = sanitizePlayerResponse(originalPlayerResponse);
             originalPlayerResponse = result.obj;
@@ -567,17 +578,24 @@
             }
             
             let originalConfig = yt.config;
-            Object.defineProperty(yt, 'config', {
-                get: () => originalConfig,
-                set: (newConfig) => {
-                    if (newConfig) {
-                        sanitizeConfig(newConfig);
-                    }
-                    originalConfig = newConfig;
-                },
-                configurable: true,
-                enumerable: true
-            });
+            try {
+                Object.defineProperty(yt, 'config', {
+                    get: () => originalConfig,
+                    set: (newConfig) => {
+                        if (newConfig) {
+                            sanitizeConfig(newConfig);
+                        }
+                        originalConfig = newConfig;
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            } catch (e) {
+                handleError(e);
+                if (yt.config) {
+                    sanitizeConfig(yt.config);
+                }
+            }
         }
         
         function sanitizeConfig(config) {
@@ -586,28 +604,45 @@
                 sanitizeArgs(config.args);
             }
             let originalArgs = config.args;
-            Object.defineProperty(config, 'args', {
-                get: () => originalArgs,
-                set: (newArgs) => {
-                    if (newArgs) {
-                        sanitizeArgs(newArgs);
-                    }
-                    originalArgs = newArgs;
-                },
-                configurable: true,
-                enumerable: true
-            });
+            try {
+                Object.defineProperty(config, 'args', {
+                    get: () => originalArgs,
+                    set: (newArgs) => {
+                        if (newArgs) {
+                            sanitizeArgs(newArgs);
+                        }
+                        originalArgs = newArgs;
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            } catch (e) {
+                handleError(e);
+                if (config.args) {
+                    sanitizeArgs(config.args);
+                }
+            }
         }
 
-        Object.defineProperty(globalThis, 'ytplayer', {
-            get: () => originalYtplayer,
-            set: (val) => {
-                sanitizeYtPlayerObject(val);
-                originalYtplayer = val;
-            },
-            configurable: true,
-            enumerable: true
-        });
+        const descPlayer = Object.getOwnPropertyDescriptor(globalThis, 'ytplayer');
+        if (!descPlayer || descPlayer.configurable) {
+            try {
+                Object.defineProperty(globalThis, 'ytplayer', {
+                    get: () => originalYtplayer,
+                    set: (val) => {
+                        sanitizeYtPlayerObject(val);
+                        originalYtplayer = val;
+                    },
+                    configurable: true,
+                    enumerable: true
+                });
+            } catch (e) {
+                console.warn('[K10C Stealth] Failed to define ytplayer. Patching directly.', e);
+                if (globalThis.ytplayer) {
+                    sanitizeYtPlayerObject(globalThis.ytplayer);
+                }
+            }
+        }
 
         if (originalYtplayer) {
             sanitizeYtPlayerObject(originalYtplayer);
@@ -655,16 +690,31 @@
 
     function trapYtCfg() {
         let originalYtcfg = globalThis.ytcfg;
+        const desc = Object.getOwnPropertyDescriptor(globalThis, 'ytcfg');
+        if (desc && !desc.configurable) {
+            console.warn('[K10C Stealth] ytcfg is not configurable. Patching directly.');
+            if (originalYtcfg) {
+                hookYtcfg(originalYtcfg);
+            }
+            return;
+        }
 
-        Object.defineProperty(globalThis, 'ytcfg', {
-            get: () => originalYtcfg,
-            set: (val) => {
-                hookYtcfg(val);
-                originalYtcfg = val;
-            },
-            configurable: true,
-            enumerable: true
-        });
+        try {
+            Object.defineProperty(globalThis, 'ytcfg', {
+                get: () => originalYtcfg,
+                set: (val) => {
+                    hookYtcfg(val);
+                    originalYtcfg = val;
+                },
+                configurable: true,
+                enumerable: true
+            });
+        } catch (e) {
+            console.warn('[K10C Stealth] Failed to define ytcfg property descriptor. Patching directly.', e);
+            if (globalThis.ytcfg) {
+                hookYtcfg(globalThis.ytcfg);
+            }
+        }
 
         if (originalYtcfg) {
             hookYtcfg(originalYtcfg);
@@ -801,49 +851,29 @@
         }
     }
 
-    function setupYtAdSkipper() {
-        let lastMutedState = false;
-        let lastPlaybackRate = 1;
-        let isAdActive = false;
+    // =========================================================================
+    // YOUTUBE AD SPEED-UP RUNNER
+    // =========================================================================
+    function runYouTubeAdSpeedUp() {
+        if (!globalThis.location.hostname.includes('youtube.com')) return;
 
         function skipYouTubeAds() {
             try {
                 const player = document.querySelector('.html5-video-player');
                 if (!player) return;
-                
-                const video = player.querySelector('video');
-                if (!video) return;
 
                 if (detectAd(player)) {
-                    handleActiveAd(video, player);
-                } else if (isAdActive) {
-                    isAdActive = false;
-                    video.muted = lastMutedState;
-                    video.playbackRate = lastPlaybackRate === 16 ? 1 : lastPlaybackRate;
-                    console.log('[K10C YouTube Shield] Ad ended. Restoring state:', {muted: lastMutedState, rate: lastPlaybackRate});
+                    const video = player.querySelector('video');
+                    if (video && isFinite(video.duration) && video.duration > 0) {
+                        console.log('[K10C YouTube Shield] Ad detected. Fast-forwarding ad video playback...');
+                        video.playbackRate = 16.0;
+                        video.muted = true;
+                        video.currentTime = video.duration - 0.05;
+                    }
+                    tryClickSkipButton(player);
                 }
             } catch (e) {
                 handleError(e);
-            }
-        }
-
-        function handleActiveAd(video, player) {
-            if (!isAdActive) {
-                isAdActive = true;
-                lastMutedState = video.muted;
-                lastPlaybackRate = video.playbackRate === 16 ? 1 : video.playbackRate;
-                console.log('[K10C YouTube Shield] Ad detected. Speeding up & muting...', {lastMutedState, lastPlaybackRate});
-            }
-            
-            video.muted = true;
-            if (video.playbackRate !== 16) {
-                video.playbackRate = 16;
-            }
-
-            tryClickSkipButton(player);
-
-            if (video.duration && Number.isFinite(video.duration) && video.currentTime < video.duration - 0.2) {
-                video.currentTime = video.duration - 0.1;
             }
         }
 
@@ -855,15 +885,15 @@
                             document.querySelector('.player-control-minimize') || 
                             document.querySelector('.ytp-back-button') ||
                             document.querySelector('.header-back-button') ||
+                            document.querySelector('.accessibility-navigation-back-button') ||
                             document.querySelector('button[aria-label*="back" i]') ||
                             document.querySelector('button[aria-label*="collapse" i]') ||
                             document.querySelector('button[aria-label*="close" i]') ||
                             document.querySelector('button[aria-label*="minimize" i]') ||
                             document.querySelector('button[aria-label*="dismiss" i]') ||
-                            document.querySelector('a[aria-label*="back" i]') ||
-                            document.querySelector('.accessibility-navigation-back-button');
+                            document.querySelector('a[aria-label*="back" i]');
                              
-        if (minimizeBtn && typeof minimizeBtn.click === 'function') {
+        if (minimizeBtn && typeof minimizeBtn.click === 'function' && minimizeBtn.offsetHeight > 0) {
             minimizeBtn.click();
             console.log('[K10C YT Swipe] Clicked minimize button element:', minimizeBtn);
             return true;
@@ -871,16 +901,26 @@
         return false;
     }
 
-    function findAndClickSvgParentButton() {
-        const svgs = document.querySelectorAll('svg');
-        for (const svg of svgs) {
-            const html = svg.innerHTML;
-            if (html.includes('chevron') || html.includes('down') || html.includes('back')) {
-                const btn = svg.closest('button') || svg.closest('a');
-                if (btn && btn.offsetHeight > 0) {
-                    btn.click();
-                    console.log('[K10C YT Swipe] Clicked suspected back/minimize SVG parent');
-                    return true;
+    function clickTopLeftBackButton() {
+        // Find all clickable buttons or anchors in the top bar region
+        const header = document.querySelector('header, ytm-header-bar, .header-bar, .ytp-chrome-top, .player-controls');
+        const searchScope = header || document;
+        const candidates = searchScope.querySelectorAll('button, a, .yt-spec-button-shape-next');
+        
+        for (const el of candidates) {
+            const rect = el.getBoundingClientRect();
+            // Check if the element is physically located in the top-left corner (typically back button is here)
+            if (rect.width > 0 && rect.height > 0 && rect.top < 65 && rect.left < 65) {
+                const hasIcon = el.querySelector('svg, i, img') !== null;
+                const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                const isBack = ariaLabel.includes('back') || ariaLabel.includes('close') || ariaLabel.includes('collapse') || ariaLabel.includes('dismiss');
+                
+                if (hasIcon || isBack) {
+                    if (typeof el.click === 'function') {
+                        el.click();
+                        console.log('[K10C YT Swipe] Clicked top-left back button:', el);
+                        return true;
+                    }
                 }
             }
         }
@@ -893,21 +933,26 @@
                               document.querySelector('.fullscreen-icon') ||
                               document.querySelector('.player-control-fullscreen');
                              
-        if (fullscreenBtn && typeof fullscreenBtn.click === 'function') {
+        if (fullscreenBtn && typeof fullscreenBtn.click === 'function' && fullscreenBtn.offsetHeight > 0) {
             fullscreenBtn.click();
             console.log('[K10C YT Swipe] Clicked fullscreen button element:', fullscreenBtn);
             return true;
         }
         
-        const svgs = document.querySelectorAll('svg');
-        for (const svg of svgs) {
-            const html = svg.innerHTML;
-            if (html.includes('fullscreen') || html.includes('expand')) {
-                const btn = svg.closest('button') || svg.closest('a');
-                if (btn && btn.offsetHeight > 0) {
-                    btn.click();
-                    console.log('[K10C YT Swipe] Clicked suspected fullscreen SVG parent');
-                    return true;
+        // Scan only SVGs INSIDE the video player to avoid clicking other page elements
+        const playerSelectors = '.html5-video-player, ytm-video-player-renderer, .video-player, #player-container, #player-control-overlay, .ytp-player-content, .player-container, .html5-video-container';
+        const player = document.querySelector(playerSelectors);
+        if (player) {
+            const svgs = player.querySelectorAll('svg');
+            for (const svg of svgs) {
+                const html = svg.innerHTML;
+                if (html.includes('fullscreen') || html.includes('expand')) {
+                    const btn = svg.closest('button') || svg.closest('a');
+                    if (btn && btn.offsetHeight > 0) {
+                        btn.click();
+                        console.log('[K10C YT Swipe] Clicked suspected player fullscreen SVG parent');
+                        return true;
+                    }
                 }
             }
         }
@@ -945,7 +990,7 @@
             if (findAndClickMinimizeButton()) {
                 return;
             }
-            if (findAndClickSvgParentButton()) {
+            if (clickTopLeftBackButton()) {
                 return;
             }
             if (globalThis.location.pathname.startsWith('/watch')) {
@@ -962,16 +1007,32 @@
         const clientX = e.touches[0].clientX;
         const isFullscreen = isYtFullscreen();
         
-        const isTopZone = isFullscreen || (clientY < window.innerHeight * 0.45 && window.scrollY <= 20);
+        const player = document.querySelector('.html5-video-player') || 
+                       document.querySelector('ytm-video-player-renderer') || 
+                       document.querySelector('video');
+        
+        let isInsidePlayer = isFullscreen;
+        if (!isInsidePlayer && player) {
+            const rect = player.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                isInsidePlayer = (
+                    clientX >= rect.left &&
+                    clientX <= rect.right &&
+                    clientY >= rect.top &&
+                    clientY <= rect.bottom
+                );
+            }
+        }
+        
+        const isBackBtnRegion = clientX < 60 && clientY < 60;
 
-        const playerSelectors = '.html5-video-player, ytm-video-player-renderer, .video-player, #player-container, #player-control-overlay, .ytp-player-content, .player-container, .html5-video-container, video';
-        const player = document.querySelector(playerSelectors);
-        const isInsidePlayer = isFullscreen || (player && (player.contains(e.target) || e.target.closest(playerSelectors)));
-
-        if (isTopZone || isInsidePlayer) {
+        if (isInsidePlayer || isBackBtnRegion) {
             gestureStartY = clientY;
             gestureStartX = clientX;
-            console.log('[K10C YT Swipe] Touchstart registered at', gestureStartX, gestureStartY, 'isFullscreen:', isFullscreen, 'isTopZone:', isTopZone, 'isInsidePlayer:', !!isInsidePlayer);
+            console.log('[K10C YT Swipe] Touchstart registered at', gestureStartX, gestureStartY, 'isFullscreen:', isFullscreen, 'isInsidePlayer:', isInsidePlayer, 'isBackBtnRegion:', isBackBtnRegion);
+        } else {
+            gestureStartY = 0;
+            gestureStartX = 0;
         }
     }
 
