@@ -850,6 +850,81 @@
         setInterval(skipYouTubeAds, 150);
     }
 
+    function findAndClickMinimizeButton() {
+        const minimizeBtn = document.querySelector('.cbr-minimize-button') || 
+                            document.querySelector('.player-control-minimize') || 
+                            document.querySelector('button[aria-label="Back"]') || 
+                            document.querySelector('button[aria-label="Minimize"]') ||
+                            document.querySelector('.ytp-back-button') ||
+                            document.querySelector('.header-back-button');
+                            
+        if (minimizeBtn && typeof minimizeBtn.click === 'function') {
+            minimizeBtn.click();
+            console.log('[K10C YT Swipe] Clicked minimize button element');
+            return true;
+        }
+        return false;
+    }
+
+    function findAndClickSvgParentButton() {
+        const svgs = document.querySelectorAll('svg');
+        for (const svg of svgs) {
+            const html = svg.innerHTML;
+            if (html.includes('chevron') || html.includes('down') || html.includes('back')) {
+                const btn = svg.closest('button') || svg.closest('a');
+                if (btn && btn.offsetHeight > 0) {
+                    btn.click();
+                    console.log('[K10C YT Swipe] Clicked suspected back/minimize SVG parent');
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function setupYtSwipeToMinimize() {
+        if (!globalThis.location.hostname.includes('youtube.com')) return;
+
+        let startY = 0;
+        let startX = 0;
+
+        globalThis.addEventListener('touchstart', function(e) {
+            const player = document.querySelector('.html5-video-player') || document.getElementById('player-container') || document.querySelector('video');
+            if (player?.contains(e.target)) {
+                startY = e.touches[0].clientY;
+                startX = e.touches[0].clientX;
+            }
+        }, { passive: true });
+
+        globalThis.addEventListener('touchend', function(e) {
+            if (startY === 0) return;
+
+            const deltaY = e.changedTouches[0].clientY - startY;
+            const deltaX = e.changedTouches[0].clientX - startX;
+
+            startY = 0;
+            startX = 0;
+
+            const isSignificantSwipeDown = deltaY > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
+            if (!isSignificantSwipeDown) return;
+
+            console.log('[K10C YT Swipe] Swipe down detected on video player. Minimizing...');
+            
+            if (findAndClickMinimizeButton()) {
+                return;
+            }
+            
+            if (findAndClickSvgParentButton()) {
+                return;
+            }
+            
+            if (globalThis.location.pathname.startsWith('/watch')) {
+                console.log('[K10C YT Swipe] Falling back to history.back()');
+                globalThis.history.back();
+            }
+        }, { passive: true });
+    }
+
     // =========================================================================
     // MOBILE CLIENT INTERCEPTIONS & AD/POPUNDER BLOCKERS
     // =========================================================================
@@ -1956,6 +2031,7 @@
         trapFetch();
         trapXhr();
         setupYtAdSkipper();
+        setupYtSwipeToMinimize();
 
         setupClickjackingBuster();
         setupLinkClickHijackInterceptor();
