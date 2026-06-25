@@ -1026,7 +1026,7 @@
     }
 
     function exitFullscreenMode() {
-        const doc = window.document;
+        const doc = globalThis.document;
         const cancelFS = doc.exitFullscreen || 
                          doc.webkitExitFullscreen || 
                          doc.mozCancelFullScreen || 
@@ -1057,12 +1057,10 @@
             if (targetContext === 'PLAYER' && !isCurrentlyFullscreen) {
                 enterFullscreenMode();
             }
-        } else { // Downward Gesture Vector
-            if (isCurrentlyFullscreen) {
-                exitFullscreenMode();
-            } else if (targetContext === 'PLAYER' || targetContext === 'METADATA') {
-                minimizeWatchPage();
-            }
+        } else if (isCurrentlyFullscreen) { // Downward Gesture Vector: Fullscreen Active
+            exitFullscreenMode();
+        } else if (targetContext === 'PLAYER' || targetContext === 'METADATA') { // Downward Gesture Vector: Portrait watch sheet
+            minimizeWatchPage();
         }
     }
 
