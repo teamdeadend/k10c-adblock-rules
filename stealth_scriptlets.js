@@ -853,14 +853,19 @@
     function findAndClickMinimizeButton() {
         const minimizeBtn = document.querySelector('.cbr-minimize-button') || 
                             document.querySelector('.player-control-minimize') || 
-                            document.querySelector('button[aria-label="Back"]') || 
-                            document.querySelector('button[aria-label="Minimize"]') ||
                             document.querySelector('.ytp-back-button') ||
-                            document.querySelector('.header-back-button');
-                            
+                            document.querySelector('.header-back-button') ||
+                            document.querySelector('button[aria-label*="back" i]') ||
+                            document.querySelector('button[aria-label*="collapse" i]') ||
+                            document.querySelector('button[aria-label*="close" i]') ||
+                            document.querySelector('button[aria-label*="minimize" i]') ||
+                            document.querySelector('button[aria-label*="dismiss" i]') ||
+                            document.querySelector('a[aria-label*="back" i]') ||
+                            document.querySelector('.accessibility-navigation-back-button');
+                             
         if (minimizeBtn && typeof minimizeBtn.click === 'function') {
             minimizeBtn.click();
-            console.log('[K10C YT Swipe] Clicked minimize button element');
+            console.log('[K10C YT Swipe] Clicked minimize button element:', minimizeBtn);
             return true;
         }
         return false;
@@ -889,10 +894,23 @@
         let startX = 0;
 
         globalThis.addEventListener('touchstart', function(e) {
-            const player = document.querySelector('.html5-video-player') || document.getElementById('player-container') || document.querySelector('video');
-            if (player?.contains(e.target)) {
-                startY = e.touches[0].clientY;
-                startX = e.touches[0].clientX;
+            if (!globalThis.location.pathname.startsWith('/watch')) return;
+
+            const clientY = e.touches[0].clientY;
+            const clientX = e.touches[0].clientX;
+            
+            // Heuristic 1: If touch starts in the top 45% of viewport and page scroll is at top
+            const isTopZone = clientY < window.innerHeight * 0.45 && window.scrollY <= 20;
+
+            // Heuristic 2: If touch target is inside any known video player selector
+            const playerSelectors = '.html5-video-player, ytm-video-player-renderer, .video-player, #player-container, #player-control-overlay, .ytp-player-content, .player-container, .html5-video-container, video';
+            const player = document.querySelector(playerSelectors);
+            const isInsidePlayer = player && (player.contains(e.target) || e.target.closest(playerSelectors));
+
+            if (isTopZone || isInsidePlayer) {
+                startY = clientY;
+                startX = clientX;
+                console.log('[K10C YT Swipe] Touchstart registered at', startX, startY, 'isTopZone:', isTopZone, 'isInsidePlayer:', !!isInsidePlayer);
             }
         }, { passive: true });
 
@@ -902,13 +920,15 @@
             const deltaY = e.changedTouches[0].clientY - startY;
             const deltaX = e.changedTouches[0].clientX - startX;
 
+            console.log('[K10C YT Swipe] Touchend detected. deltaY:', deltaY, 'deltaX:', deltaX);
+
             startY = 0;
             startX = 0;
 
             const isSignificantSwipeDown = deltaY > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
             if (!isSignificantSwipeDown) return;
 
-            console.log('[K10C YT Swipe] Swipe down detected on video player. Minimizing...');
+            console.log('[K10C YT Swipe] Swipe down gesture validated. Minimizing watch page...');
             
             if (findAndClickMinimizeButton()) {
                 return;
