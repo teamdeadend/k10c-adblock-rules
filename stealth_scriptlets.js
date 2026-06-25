@@ -359,6 +359,7 @@
     }
 
     function trapElementDimensions() {
+        if (isTrustedHost) return;
         try {
             const isAdIdentifier = function(str) {
                 if (!str || typeof str !== 'string') return false;
@@ -1213,10 +1214,11 @@
     const hookOnclickProperty = (proto) => {
         try {
             const desc = Object.getOwnPropertyDescriptor(proto, 'onclick');
-            if (!desc) return;
-            let localClick = desc.value || null;
+            if (!desc || !desc.set) return;
             Object.defineProperty(proto, 'onclick', {
-                get: function() { return localClick; },
+                get: function() { 
+                    return desc.get ? desc.get.call(this) : (desc.value || null); 
+                },
                 set: function(val) {
                     if (typeof val === 'function' && !isTrustedHost) {
                         const valStr = val.toString();
@@ -1238,9 +1240,9 @@
                             }
                         };
                         makeNative(wrappedVal, 'onclick');
-                        localClick = wrappedVal;
+                        desc.set.call(this, wrappedVal);
                     } else {
-                        localClick = val;
+                        desc.set.call(this, val);
                     }
                 },
                 configurable: true,
@@ -1961,9 +1963,11 @@
         trapWindowOpen();
         trapProgrammaticClicksAndSubmits();
         
-        hookOnclickProperty(HTMLElement.prototype);
-        hookOnclickProperty(Document.prototype);
-        hookOnclickProperty(Window.prototype);
+        if (!isTrustedHost) {
+            hookOnclickProperty(HTMLElement.prototype);
+            hookOnclickProperty(Document.prototype);
+            hookOnclickProperty(Window.prototype);
+        }
 
         setupCosmeticStyles();
         setupVideoSnifferObserver();
