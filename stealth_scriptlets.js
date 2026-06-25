@@ -1982,40 +1982,53 @@
         console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
     }
 
+    async function clearAllCaches() {
+        if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
+            try {
+                const keys = await globalThis.caches.keys();
+                for (const key of keys) {
+                    await globalThis.caches.delete(key);
+                }
+            } catch (e) {
+                handleError(e);
+            }
+        }
+    }
+
+    async function unregisterServiceWorkers() {
+        try {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            if (!registrations || registrations.length === 0) return false;
+            
+            const promises = [];
+            for (const registration of registrations) {
+                promises.push(registration.unregister());
+            }
+            const results = await Promise.all(promises);
+            return results.some(Boolean);
+        } catch (e) {
+            handleError(e);
+            return false;
+        }
+    }
+
+    function triggerReloadBypass() {
+        const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
+        if (!hasReloaded) {
+            sessionStorage.setItem('k10c_sw_reloaded', 'true');
+            console.log('[K10C YouTube Shield] Reloading to apply bypass...');
+            globalThis.location.reload();
+        }
+    }
+
     async function initializeServiceWorkerBypass() {
         try {
             if (navigator.serviceWorker) {
-                try {
-                    const registrations = await navigator.serviceWorker.getRegistrations();
-                    if (registrations && registrations.length > 0) {
-                        const promises = [];
-                        for (const registration of registrations) {
-                            promises.push(registration.unregister());
-                        }
-                        const results = await Promise.all(promises);
-                        if (results.some(Boolean)) {
-                            console.log('[K10C YouTube Shield] Service Worker unregistered.');
-                            if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
-                                try {
-                                    const keys = await globalThis.caches.keys();
-                                    for (const key of keys) {
-                                        await globalThis.caches.delete(key);
-                                    }
-                                } catch (e) {
-                                    handleError(e);
-                                }
-                            }
-
-                            const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
-                            if (!hasReloaded) {
-                                sessionStorage.setItem('k10c_sw_reloaded', 'true');
-                                console.log('[K10C YouTube Shield] Reloading to apply bypass...');
-                                globalThis.location.reload();
-                            }
-                        }
-                    }
-                } catch (e) {
-                    handleError(e);
+                const didUnregister = await unregisterServiceWorkers();
+                if (didUnregister) {
+                    console.log('[K10C YouTube Shield] Service Worker unregistered.');
+                    await clearAllCaches();
+                    triggerReloadBypass();
                 }
             }
             if (globalThis.Navigator?.prototype) {
