@@ -1113,8 +1113,8 @@
         const deltaX = currentX - touchStartX;
         const deltaY = currentY - touchStartY;
 
-        // Determine vector trajectory angle
-        const angle = Math.abs(Math.atan2(deltaY, deltaX) * (180 / Math.PI));
+        // Determine vector trajectory angle using absolute deltas
+        const angle = Math.atan2(Math.abs(deltaY), Math.abs(deltaX)) * (180 / Math.PI);
 
         // Skip non-vertical interactions (e.g. scrubbing or lateral page swipes)
         if (angle < INTERCEPT_ANGLE) {
