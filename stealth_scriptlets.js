@@ -887,6 +887,33 @@
         return false;
     }
 
+    function findAndClickFullscreenButton() {
+        const fullscreenBtn = document.querySelector('.ytp-fullscreen-button') || 
+                              document.querySelector('button[aria-label*="fullscreen" i]') || 
+                              document.querySelector('.fullscreen-icon') ||
+                              document.querySelector('.player-control-fullscreen');
+                             
+        if (fullscreenBtn && typeof fullscreenBtn.click === 'function') {
+            fullscreenBtn.click();
+            console.log('[K10C YT Swipe] Clicked fullscreen button element:', fullscreenBtn);
+            return true;
+        }
+        
+        const svgs = document.querySelectorAll('svg');
+        for (const svg of svgs) {
+            const html = svg.innerHTML;
+            if (html.includes('fullscreen') || html.includes('expand')) {
+                const btn = svg.closest('button') || svg.closest('a');
+                if (btn && btn.offsetHeight > 0) {
+                    btn.click();
+                    console.log('[K10C YT Swipe] Clicked suspected fullscreen SVG parent');
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     function setupYtSwipeToMinimize() {
         if (!globalThis.location.hostname.includes('youtube.com')) return;
 
@@ -899,18 +926,20 @@
             const clientY = e.touches[0].clientY;
             const clientX = e.touches[0].clientX;
             
-            // Heuristic 1: If touch starts in the top 45% of viewport and page scroll is at top
-            const isTopZone = clientY < window.innerHeight * 0.45 && window.scrollY <= 20;
+            const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            
+            // If in fullscreen, accept touchstart anywhere since player occupies 100% of the viewport.
+            // If in portrait, accept touchstart if in top 45% of viewport and page scroll is at top, or inside player.
+            const isTopZone = isCurrentlyFullscreen || (clientY < window.innerHeight * 0.45 && window.scrollY <= 20);
 
-            // Heuristic 2: If touch target is inside any known video player selector
             const playerSelectors = '.html5-video-player, ytm-video-player-renderer, .video-player, #player-container, #player-control-overlay, .ytp-player-content, .player-container, .html5-video-container, video';
             const player = document.querySelector(playerSelectors);
-            const isInsidePlayer = player && (player.contains(e.target) || e.target.closest(playerSelectors));
+            const isInsidePlayer = isCurrentlyFullscreen || (player && (player.contains(e.target) || e.target.closest(playerSelectors)));
 
             if (isTopZone || isInsidePlayer) {
                 startY = clientY;
                 startX = clientX;
-                console.log('[K10C YT Swipe] Touchstart registered at', startX, startY, 'isTopZone:', isTopZone, 'isInsidePlayer:', !!isInsidePlayer);
+                console.log('[K10C YT Swipe] Touchstart registered at', startX, startY, 'isFullscreen:', isCurrentlyFullscreen, 'isTopZone:', isTopZone, 'isInsidePlayer:', !!isInsidePlayer);
             }
         }, { passive: true });
 
@@ -925,22 +954,44 @@
             startY = 0;
             startX = 0;
 
-            const isSignificantSwipeDown = deltaY > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
-            if (!isSignificantSwipeDown) return;
+            const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
 
-            console.log('[K10C YT Swipe] Swipe down gesture validated. Minimizing watch page...');
-            
-            if (findAndClickMinimizeButton()) {
-                return;
-            }
-            
-            if (findAndClickSvgParentButton()) {
-                return;
-            }
-            
-            if (globalThis.location.pathname.startsWith('/watch')) {
-                console.log('[K10C YT Swipe] Falling back to history.back()');
-                globalThis.history.back();
+            // Check if vertical swipe is dominant and significant
+            const isSignificantSwipe = Math.abs(deltaY) > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
+            if (!isSignificantSwipe) return;
+
+            if (deltaY < 0) {
+                // Swipe Up
+                console.log('[K10C YT Swipe] Swipe up gesture validated.');
+                if (isCurrentlyFullscreen) {
+                    console.log('[K10C YT Swipe] Already in fullscreen. Ignoring swipe up.');
+                    return;
+                }
+                console.log('[K10C YT Swipe] Triggering fullscreen...');
+                findAndClickFullscreenButton();
+            } else {
+                // Swipe Down
+                console.log('[K10C YT Swipe] Swipe down gesture validated.');
+                if (isCurrentlyFullscreen) {
+                    console.log('[K10C YT Swipe] Exiting fullscreen...');
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    }
+                } else {
+                    console.log('[K10C YT Swipe] Minimizing watch page...');
+                    if (findAndClickMinimizeButton()) {
+                        return;
+                    }
+                    if (findAndClickSvgParentButton()) {
+                        return;
+                    }
+                    if (globalThis.location.pathname.startsWith('/watch')) {
+                        console.log('[K10C YT Swipe] Falling back to history.back()');
+                        globalThis.history.back();
+                    }
+                }
             }
         }, { passive: true });
     }
