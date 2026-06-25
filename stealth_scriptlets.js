@@ -991,16 +991,19 @@
     const INTERCEPT_ANGLE = 60;      // Angle threshold for vertical intent (degrees)
 
     function isYtFullscreen() {
-        return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+        const docFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+        if (docFS) return true;
+        // Fallback for Android WebView orientation switches
+        return window.innerWidth > window.innerHeight;
     }
 
     function resolveTargetContext(element) {
         if (!element) return 'PAGE';
-        if (element.closest('.html5-video-player') || element.closest('ytm-player') || element.closest('ytm-player-view-model') || element.closest('.video-player')) {
-            return 'PLAYER';
-        }
         if (element.closest('ytm-watch-metadata-renderer') || element.closest('.ytm-watch-metadata') || element.closest('#watch-header') || element.closest('#watch-metadata-app-promo-renderer')) {
             return 'METADATA';
+        }
+        if (element.closest('.html5-video-player') || element.closest('ytm-player') || element.closest('ytm-player-view-model') || element.closest('.video-player')) {
+            return 'PLAYER';
         }
         return 'PAGE';
     }
@@ -1053,14 +1056,22 @@
 
     function executeGestureAction(deltaY, targetContext) {
         const isCurrentlyFullscreen = isYtFullscreen();
+        console.log('[K10C YT Swipe Debug] executeGestureAction: deltaY =', deltaY, 'targetContext =', targetContext, 'isCurrentlyFullscreen =', isCurrentlyFullscreen);
         if (deltaY < 0) { // Upward Gesture Vector
             if (targetContext === 'PLAYER' && !isCurrentlyFullscreen) {
+                console.log('[K10C YT Swipe Debug] Upward Swipe on PLAYER - entering fullscreen...');
                 enterFullscreenMode();
+            } else {
+                console.log('[K10C YT Swipe Debug] Upward Swipe ignored (targetContext =', targetContext, ')');
             }
         } else if (isCurrentlyFullscreen) { // Downward Gesture Vector: Fullscreen Active
+            console.log('[K10C YT Swipe Debug] Downward Swipe in Fullscreen - exiting fullscreen...');
             exitFullscreenMode();
         } else if (targetContext === 'PLAYER' || targetContext === 'METADATA') { // Downward Gesture Vector: Portrait watch sheet
+            console.log('[K10C YT Swipe Debug] Downward Swipe on PLAYER/METADATA in portrait - collapsing page...');
             minimizeWatchPage();
+        } else {
+            console.log('[K10C YT Swipe Debug] Downward Swipe ignored (targetContext =', targetContext, ')');
         }
     }
 
@@ -1078,6 +1089,7 @@
         touchStartY = touch.clientY;
         trackedTarget = event.target;
         gestureActive = true;
+        console.log('[K10C YT Swipe Debug] touchstart: element =', trackedTarget ? trackedTarget.tagName : 'null', 'class =', trackedTarget ? trackedTarget.className : 'null', 'id =', trackedTarget ? trackedTarget.id : 'null', 'coords =', touchStartX, touchStartY);
     }
 
     function onYtTouchMove(event) {
@@ -1111,6 +1123,8 @@
             }
         }
 
+        console.log('[K10C YT Swipe Debug] touchmove: deltaY =', deltaY, 'deltaX =', deltaX, 'angle =', angle, 'targetContext =', targetContext, 'shouldIntercept =', shouldIntercept);
+
         if (shouldIntercept) {
             if (event.cancelable) {
                 event.preventDefault();
@@ -1133,10 +1147,10 @@
 
     function setupYtSwipeToMinimize() {
         if (!globalThis.location.hostname.includes('youtube.com')) return;
-        globalThis.addEventListener('touchstart', onYtTouchStart, { passive: false, capture: true });
-        globalThis.addEventListener('touchmove', onYtTouchMove, { passive: false, capture: true });
-        globalThis.addEventListener('touchend', onYtTouchEnd, { passive: true, capture: true });
-        globalThis.addEventListener('touchcancel', onYtTouchEnd, { passive: true, capture: true });
+        document.addEventListener('touchstart', onYtTouchStart, { passive: false, capture: true });
+        document.addEventListener('touchmove', onYtTouchMove, { passive: false, capture: true });
+        document.addEventListener('touchend', onYtTouchEnd, { passive: true, capture: true });
+        document.addEventListener('touchcancel', onYtTouchEnd, { passive: true, capture: true });
         console.log('[K10C YT Swipe] Custom Android WebView Interception Handler Engaged.');
     }
 
