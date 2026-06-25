@@ -914,86 +914,92 @@
         return false;
     }
 
+    let gestureStartY = 0;
+    let gestureStartX = 0;
+
+    function isYtFullscreen() {
+        return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+    }
+
+    function handleYtSwipeUp() {
+        console.log('[K10C YT Swipe] Swipe up gesture validated.');
+        if (isYtFullscreen()) {
+            console.log('[K10C YT Swipe] Already in fullscreen. Ignoring swipe up.');
+            return;
+        }
+        console.log('[K10C YT Swipe] Triggering fullscreen...');
+        findAndClickFullscreenButton();
+    }
+
+    function handleYtSwipeDown() {
+        console.log('[K10C YT Swipe] Swipe down gesture validated.');
+        if (isYtFullscreen()) {
+            console.log('[K10C YT Swipe] Exiting fullscreen...');
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            }
+        } else {
+            console.log('[K10C YT Swipe] Minimizing watch page...');
+            if (findAndClickMinimizeButton()) {
+                return;
+            }
+            if (findAndClickSvgParentButton()) {
+                return;
+            }
+            if (globalThis.location.pathname.startsWith('/watch')) {
+                console.log('[K10C YT Swipe] Falling back to history.back()');
+                globalThis.history.back();
+            }
+        }
+    }
+
+    function onYtTouchStart(e) {
+        if (!globalThis.location.pathname.startsWith('/watch')) return;
+
+        const clientY = e.touches[0].clientY;
+        const clientX = e.touches[0].clientX;
+        const isFullscreen = isYtFullscreen();
+        
+        const isTopZone = isFullscreen || (clientY < window.innerHeight * 0.45 && window.scrollY <= 20);
+
+        const playerSelectors = '.html5-video-player, ytm-video-player-renderer, .video-player, #player-container, #player-control-overlay, .ytp-player-content, .player-container, .html5-video-container, video';
+        const player = document.querySelector(playerSelectors);
+        const isInsidePlayer = isFullscreen || (player && (player.contains(e.target) || e.target.closest(playerSelectors)));
+
+        if (isTopZone || isInsidePlayer) {
+            gestureStartY = clientY;
+            gestureStartX = clientX;
+            console.log('[K10C YT Swipe] Touchstart registered at', gestureStartX, gestureStartY, 'isFullscreen:', isFullscreen, 'isTopZone:', isTopZone, 'isInsidePlayer:', !!isInsidePlayer);
+        }
+    }
+
+    function onYtTouchEnd(e) {
+        if (gestureStartY === 0) return;
+
+        const deltaY = e.changedTouches[0].clientY - gestureStartY;
+        const deltaX = e.changedTouches[0].clientX - gestureStartX;
+
+        console.log('[K10C YT Swipe] Touchend detected. deltaY:', deltaY, 'deltaX:', deltaX);
+
+        gestureStartY = 0;
+        gestureStartX = 0;
+
+        const isSignificantSwipe = Math.abs(deltaY) > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
+        if (!isSignificantSwipe) return;
+
+        if (deltaY < 0) {
+            handleYtSwipeUp();
+        } else {
+            handleYtSwipeDown();
+        }
+    }
+
     function setupYtSwipeToMinimize() {
         if (!globalThis.location.hostname.includes('youtube.com')) return;
-
-        let startY = 0;
-        let startX = 0;
-
-        globalThis.addEventListener('touchstart', function(e) {
-            if (!globalThis.location.pathname.startsWith('/watch')) return;
-
-            const clientY = e.touches[0].clientY;
-            const clientX = e.touches[0].clientX;
-            
-            const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
-            
-            // If in fullscreen, accept touchstart anywhere since player occupies 100% of the viewport.
-            // If in portrait, accept touchstart if in top 45% of viewport and page scroll is at top, or inside player.
-            const isTopZone = isCurrentlyFullscreen || (clientY < window.innerHeight * 0.45 && window.scrollY <= 20);
-
-            const playerSelectors = '.html5-video-player, ytm-video-player-renderer, .video-player, #player-container, #player-control-overlay, .ytp-player-content, .player-container, .html5-video-container, video';
-            const player = document.querySelector(playerSelectors);
-            const isInsidePlayer = isCurrentlyFullscreen || (player && (player.contains(e.target) || e.target.closest(playerSelectors)));
-
-            if (isTopZone || isInsidePlayer) {
-                startY = clientY;
-                startX = clientX;
-                console.log('[K10C YT Swipe] Touchstart registered at', startX, startY, 'isFullscreen:', isCurrentlyFullscreen, 'isTopZone:', isTopZone, 'isInsidePlayer:', !!isInsidePlayer);
-            }
-        }, { passive: true });
-
-        globalThis.addEventListener('touchend', function(e) {
-            if (startY === 0) return;
-
-            const deltaY = e.changedTouches[0].clientY - startY;
-            const deltaX = e.changedTouches[0].clientX - startX;
-
-            console.log('[K10C YT Swipe] Touchend detected. deltaY:', deltaY, 'deltaX:', deltaX);
-
-            startY = 0;
-            startX = 0;
-
-            const isCurrentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
-
-            // Check if vertical swipe is dominant and significant
-            const isSignificantSwipe = Math.abs(deltaY) > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
-            if (!isSignificantSwipe) return;
-
-            if (deltaY < 0) {
-                // Swipe Up
-                console.log('[K10C YT Swipe] Swipe up gesture validated.');
-                if (isCurrentlyFullscreen) {
-                    console.log('[K10C YT Swipe] Already in fullscreen. Ignoring swipe up.');
-                    return;
-                }
-                console.log('[K10C YT Swipe] Triggering fullscreen...');
-                findAndClickFullscreenButton();
-            } else {
-                // Swipe Down
-                console.log('[K10C YT Swipe] Swipe down gesture validated.');
-                if (isCurrentlyFullscreen) {
-                    console.log('[K10C YT Swipe] Exiting fullscreen...');
-                    if (document.exitFullscreen) {
-                        document.exitFullscreen();
-                    } else if (document.webkitExitFullscreen) {
-                        document.webkitExitFullscreen();
-                    }
-                } else {
-                    console.log('[K10C YT Swipe] Minimizing watch page...');
-                    if (findAndClickMinimizeButton()) {
-                        return;
-                    }
-                    if (findAndClickSvgParentButton()) {
-                        return;
-                    }
-                    if (globalThis.location.pathname.startsWith('/watch')) {
-                        console.log('[K10C YT Swipe] Falling back to history.back()');
-                        globalThis.history.back();
-                    }
-                }
-            }
-        }, { passive: true });
+        globalThis.addEventListener('touchstart', onYtTouchStart, { passive: true });
+        globalThis.addEventListener('touchend', onYtTouchEnd, { passive: true });
     }
 
     // =========================================================================
