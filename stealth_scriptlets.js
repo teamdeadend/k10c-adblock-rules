@@ -909,12 +909,12 @@
                             document.querySelector('.ytp-back-button') ||
                             document.querySelector('.header-back-button') ||
                             document.querySelector('.accessibility-navigation-back-button') ||
-                            document.querySelector('button[aria-label*="back" i]') ||
+                            document.querySelector('button[aria-label*="back" i]:not([aria-label*="playback" i])') ||
                             document.querySelector('button[aria-label*="collapse" i]') ||
                             document.querySelector('button[aria-label*="close" i]') ||
                             document.querySelector('button[aria-label*="minimize" i]') ||
                             document.querySelector('button[aria-label*="dismiss" i]') ||
-                            document.querySelector('a[aria-label*="back" i]');
+                            document.querySelector('a[aria-label*="back" i]:not([aria-label*="playback" i])');
                              
         if (minimizeBtn && typeof minimizeBtn.click === 'function' && minimizeBtn.offsetHeight > 0) {
             minimizeBtn.click();
@@ -936,7 +936,7 @@
             if (rect.width > 0 && rect.height > 0 && rect.top < 65 && rect.left < 65) {
                 const hasIcon = el.querySelector('svg, i, img') !== null;
                 const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
-                const isBack = ariaLabel.includes('back') || ariaLabel.includes('close') || ariaLabel.includes('collapse') || ariaLabel.includes('dismiss');
+                const isBack = (ariaLabel.includes('back') && !ariaLabel.includes('playback')) || ariaLabel.includes('close') || ariaLabel.includes('collapse') || ariaLabel.includes('dismiss');
                 
                 if (hasIcon || isBack) {
                     if (typeof el.click === 'function') {
