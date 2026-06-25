@@ -242,6 +242,177 @@
     };
 
     // =========================================================================
+    // K10C AD BLOCK & VISIBILITY BYPASS TRAPS
+    // =========================================================================
+    function trapAddEventListener() {
+        try {
+            const originalAddEventListener = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type, listener, options) {
+                if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
+                    // Drop visibility tracking listeners entirely to prevent pauses on tab switch
+                    console.log('[K10C Audio Lock] Intercepted and blocked visibilitychange listener registration');
+                    return;
+                }
+                if (type === 'blur') {
+                    // Wrap blur events to prevent defocus checks from pausing playback
+                    const originalListener = listener;
+                    listener = function(event) {
+                        // Suppress defocus execution callbacks by doing nothing
+                    };
+                }
+                return originalAddEventListener.call(this, type, listener, options);
+            };
+            makeNative(EventTarget.prototype.addEventListener, 'addEventListener');
+        } catch (e) {
+            handleError(e);
+        }
+    }
+
+    function trapAdsByGoogle() {
+        try {
+            const dummyAdsbygoogle = [];
+            Object.defineProperty(dummyAdsbygoogle, 'push', {
+                value: function(obj) {
+                    console.log('[K10C Stealth] Intercepted AdsbyGoogle configuration register request');
+                    try {
+                        if (obj && typeof obj === 'object') {
+                            if (typeof obj.onload === 'function') {
+                                setTimeout(obj.onload, 10);
+                            }
+                        }
+                    } catch (e) {}
+                    return Array.prototype.push.call(this, obj);
+                },
+                writable: false,
+                configurable: true
+            });
+
+            Object.defineProperty(dummyAdsbygoogle, 'length', {
+                get: function() {
+                    return undefined;
+                }
+            });
+
+            Object.defineProperty(globalThis, 'adsbygoogle', {
+                get: function() { return dummyAdsbygoogle; },
+                set: function(val) {
+                    if (Array.isArray(val)) {
+                        val.forEach(item => dummyAdsbygoogle.push(item));
+                    }
+                },
+                configurable: true
+            });
+
+            const inertFunction = function() { return () => {}; };
+            const mockObjects = {
+                google_jobrunner: {
+                    started: true,
+                    execution_templates: {},
+                    google_render_ad: inertFunction
+                },
+                google_ad_client: "ca-pub-1000000000000000",
+                google_ad_width: 728,
+                google_ad_height: 90,
+                google_ad_output: "html",
+                google_ad_format: "728x90_as",
+                ga: function() {
+                    if (arguments.length > 0 && typeof arguments[arguments.length - 1] === 'function') {
+                        const callback = arguments[arguments.length - 1];
+                        try { setTimeout(callback, 0); } catch (e) {}
+                    }
+                }
+            };
+
+            Object.keys(mockObjects).forEach(key => {
+                Object.defineProperty(globalThis, key, {
+                    get: function() { return mockObjects[key]; },
+                    set: function() {},
+                    configurable: true
+                });
+            });
+        } catch (e) {
+            handleError(e);
+        }
+    }
+
+    function trapMediaPause() {
+        try {
+            const originalPause = HTMLMediaElement.prototype.pause;
+            HTMLMediaElement.prototype.pause = function() {
+                const stack = new Error().stack || '';
+                if (stack.includes('visibilitychange') || stack.includes('webkitvisibilitychange') || stack.includes('blur')) {
+                    console.warn('[K10C Audio Lock] Intercepted and blocked pause execution triggered by visibility loss');
+                    return;
+                }
+                return originalPause.apply(this, arguments);
+            };
+            makeNative(HTMLMediaElement.prototype.pause, 'pause');
+        } catch (e) {
+            handleError(e);
+        }
+    }
+
+    function trapElementDimensions() {
+        try {
+            const originalGetClientRects = Element.prototype.getClientRects;
+            const originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+            const originalOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+
+            Element.prototype.getClientRects = function() {
+                const id = this.getAttribute('id') || '';
+                const className = this.getAttribute('class') || '';
+                if (id.includes('ad') || className.includes('ad') || className.includes('sponsored')) {
+                    const fakeDOMRect = {
+                        bottom: 250,
+                        height: 250,
+                        left: 10,
+                        right: 310,
+                        top: 0,
+                        width: 300,
+                        x: 10,
+                        y: 0,
+                        toJSON: function() { return this; }
+                    };
+                    return {
+                        0: fakeDOMRect,
+                        length: 1,
+                        item: function(index) { return index === 0 ? fakeDOMRect : null; }
+                    };
+                }
+                return originalGetClientRects.apply(this, arguments);
+            };
+
+            if (originalOffsetHeight && originalOffsetWidth) {
+                Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+                    get: function() {
+                        const id = this.getAttribute('id') || '';
+                        const className = this.getAttribute('class') || '';
+                        if (id.includes('ad') || className.includes('ad') || className.includes('sponsored')) {
+                            return 250;
+                        }
+                        return originalOffsetHeight.get.call(this);
+                    },
+                    configurable: true
+                });
+
+                Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+                    get: function() {
+                        const id = this.getAttribute('id') || '';
+                        const className = this.getAttribute('class') || '';
+                        if (id.includes('ad') || className.includes('ad') || className.includes('sponsored')) {
+                            return 300;
+                        }
+                        return originalOffsetWidth.get.call(this);
+                    },
+                    configurable: true
+                });
+            }
+        } catch (e) {
+            handleError(e);
+        }
+    }
+
+    // =========================================================================
     // YOUTUBE RESPONSE SANITIZATION ENGINE
     // =========================================================================
     function sanitizePlayerResponse(obj) {
@@ -431,47 +602,47 @@
         }
     }
 
-    function hookYtcfg(cfg) {
-        if (!cfg || typeof cfg !== 'object') return;
-        
-        if (cfg.data_) {
-            sanitizeYtcfgObject(cfg.data_);
-        }
-        
-        if (typeof cfg.set === 'function') {
-            let originalSet = cfg.set;
-            cfg.set = function(...args) {
-                if (args[0] && typeof args[0] === 'object') {
-                    sanitizeYtcfgObject(args[0]);
-                } else if (typeof args[0] === 'string') {
-                    if (args[0] === 'PLAYER_CONFIG' || args[0] === 'PLAYER_VARS') {
-                        args[1] = sanitizeYtcfgValue(args[0], args[1]);
-                    } else if (args[0] === 'EXPERIMENT_FLAGS') {
-                        sanitizeExperimentFlags(args[1]);
-                    }
-                }
-                return originalSet.apply(this, args);
-            };
-            makeNative(cfg.set, 'set');
-        }
-
-        if (typeof cfg.get === 'function') {
-            let originalGet = cfg.get;
-            cfg.get = function(key) {
-                let val = originalGet.call(this, key);
-                if (key === 'PLAYER_CONFIG' || key === 'PLAYER_VARS') {
-                    return sanitizeYtcfgValue(key, val);
-                } else if (key === 'EXPERIMENT_FLAGS') {
-                    sanitizeExperimentFlags(val);
-                }
-                return val;
-            };
-            makeNative(cfg.get, 'get');
-        }
-    }
-
     function trapYtCfg() {
         let originalYtcfg = globalThis.ytcfg;
+
+        function hookYtcfg(cfg) {
+            if (!cfg || typeof cfg !== 'object') return;
+            
+            if (cfg.data_) {
+                sanitizeYtcfgObject(cfg.data_);
+            }
+            
+            if (typeof cfg.set === 'function') {
+                let originalSet = cfg.set;
+                cfg.set = function(...args) {
+                    if (args[0] && typeof args[0] === 'object') {
+                        sanitizeYtcfgObject(args[0]);
+                    } else if (typeof args[0] === 'string') {
+                        if (args[0] === 'PLAYER_CONFIG' || args[0] === 'PLAYER_VARS') {
+                            args[1] = sanitizeYtcfgValue(args[0], args[1]);
+                        } else if (args[0] === 'EXPERIMENT_FLAGS') {
+                            sanitizeExperimentFlags(args[1]);
+                        }
+                    }
+                    return originalSet.apply(this, args);
+                };
+                makeNative(cfg.set, 'set');
+            }
+
+            if (typeof cfg.get === 'function') {
+                let originalGet = cfg.get;
+                cfg.get = function(key) {
+                    let val = originalGet.call(this, key);
+                    if (key === 'PLAYER_CONFIG' || key === 'PLAYER_VARS') {
+                        return sanitizeYtcfgValue(key, val);
+                    } else if (key === 'EXPERIMENT_FLAGS') {
+                        sanitizeExperimentFlags(val);
+                    }
+                    return val;
+                };
+                makeNative(cfg.get, 'get');
+            }
+        }
 
         Object.defineProperty(globalThis, 'ytcfg', {
             get: () => originalYtcfg,
@@ -488,37 +659,10 @@
         }
     }
 
-    function handleFetchedResponse(response, urlStr) {
-        const clonedResponse = response.clone();
-        return clonedResponse.text()
-            .then(function(jsonText) {
-                try {
-                    const obj = JSON.parse(jsonText);
-                    const result = sanitizePlayerResponse(obj);
-                    if (result.modified) {
-                        console.log('[K10C YouTube Shield Fetch] Successfully sanitized InnerTube response: ' + urlStr);
-                        return new Response(JSON.stringify(result.obj), {
-                            status: response.status,
-                            statusText: response.statusText || 'OK',
-                            headers: response.headers
-                        });
-                    }
-                } catch (e) {
-                    handleError(e);
-                }
-                return response;
-            })
-            .catch(function(e) {
-                handleError(e);
-                return response;
-            });
-    }
-
     function trapFetch() {
         if (globalThis.fetch) {
             const originalFetch = globalThis.fetch;
-            globalThis.fetch = function() {
-                const args = arguments;
+            globalThis.fetch = async function(...args) {
                 const url = args[0];
                 let urlStr = '';
                 if (typeof url === 'string') {
@@ -536,11 +680,27 @@
                 if (urlStr.includes('youtubei/v1/player') ||
                     urlStr.includes('youtubei/v1/next') ||
                     urlStr.includes('youtubei/v1/get_watch')) {
-                    return originalFetch.apply(this, args).then(function(response) {
-                        return handleFetchedResponse(response, urlStr);
-                    });
+                    const response = await originalFetch(...args);
+                    const clonedResponse = response.clone();
+                    try {
+                        const jsonText = await clonedResponse.text();
+                        const obj = JSON.parse(jsonText);
+                        let result = sanitizePlayerResponse(obj);
+                        if (result.modified) {
+                            console.log('[K10C YouTube Shield Fetch] Successfully sanitized InnerTube response: ' + urlStr);
+                            return new Response(JSON.stringify(result.obj), {
+                                status: response.status,
+                                statusText: response.statusText || 'OK',
+                                headers: response.headers
+                            });
+                        }
+                        return response;
+                    } catch (e) {
+                        handleError(e);
+                        return response;
+                    }
                 }
-                return originalFetch.apply(this, args);
+                return originalFetch(...args);
             };
             makeNative(globalThis.fetch, 'fetch');
         }
@@ -1743,47 +1903,6 @@
     // =========================================================================
     // MAIN ENGINE INITIALIZATION ENTRY POINT
     // =========================================================================
-    function applyDocumentVisibilityBypasses() {
-        try { lockProperty(Document.prototype, 'hidden', false); } catch (e) { handleError(e); }
-        try { lockProperty(Document.prototype, 'visibilityState', 'visible'); } catch (e) { handleError(e); }
-        try { lockProperty(Document.prototype, 'webkitHidden', false); } catch (e) { handleError(e); }
-        try { lockProperty(Document.prototype, 'webkitVisibilityState', 'visible'); } catch (e) { handleError(e); }
-    }
-
-    function applyYtBypasses() {
-        try { trapYtPlayer(); } catch (e) { handleError(e); }
-        try { trapYtCfg(); } catch (e) { handleError(e); }
-        try { trapFetch(); } catch (e) { handleError(e); }
-        try { trapXhr(); } catch (e) { handleError(e); }
-        try { setupYtAdSkipper(); } catch (e) { handleError(e); }
-    }
-
-    function applyNavigationAndClickBypasses() {
-        try { setupClickjackingBuster(); } catch (e) { handleError(e); }
-        try { setupLinkClickHijackInterceptor(); } catch (e) { handleError(e); }
-        try { setupEventPropagationTraps(); } catch (e) { handleError(e); }
-        try { trapWindowOpen(); } catch (e) { handleError(e); }
-        try { trapProgrammaticClicksAndSubmits(); } catch (e) { handleError(e); }
-    }
-
-    function applyClickHooks() {
-        try { hookOnclickProperty(HTMLElement.prototype); } catch (e) { handleError(e); }
-        try { hookOnclickProperty(Document.prototype); } catch (e) { handleError(e); }
-        try { hookOnclickProperty(Window.prototype); } catch (e) { handleError(e); }
-    }
-
-    function applyMediaAndDomBypasses() {
-        try { setupCosmeticStyles(); } catch (e) { handleError(e); }
-        try { setupVideoSnifferObserver(); } catch (e) { handleError(e); }
-        try { trapCreateObjectURL(); } catch (e) { handleError(e); }
-        try { trapMediaElementProperties(); } catch (e) { handleError(e); }
-        try { trapAttachShadow(); } catch (e) { handleError(e); }
-        try { setupPlaybackMonitoringListeners(); } catch (e) { handleError(e); }
-        try { setupMutationObserverAndScanner(); } catch (e) { handleError(e); }
-        try { setupDOMScannerFallback(); } catch (e) { handleError(e); }
-        try { setupCosmeticOverlayBuster(); } catch (e) { handleError(e); }
-    }
-
     function initializeStealthEngine() {
         try {
             const currentHost = globalThis.location.hostname;
@@ -1801,110 +1920,98 @@
             isTrustedHost = false;
         }
 
-        try { initializeServiceWorkerBypass(); } catch (e) { handleError(e); }
+        initializeServiceWorkerBypass();
         
-        applyDocumentVisibilityBypasses();
-        applyYtBypasses();
-        applyNavigationAndClickBypasses();
-        applyClickHooks();
-        applyMediaAndDomBypasses();
+        lockProperty(Document.prototype, 'hidden', false);
+        lockProperty(Document.prototype, 'visibilityState', 'visible');
+        lockProperty(Document.prototype, 'webkitHidden', false);
+        lockProperty(Document.prototype, 'webkitVisibilityState', 'visible');
+
+        trapAddEventListener();
+        trapAdsByGoogle();
+        trapMediaPause();
+        trapElementDimensions();
+        
+        trapYtPlayer();
+        trapYtCfg();
+        trapFetch();
+        trapXhr();
+        setupYtAdSkipper();
+
+        setupClickjackingBuster();
+        setupLinkClickHijackInterceptor();
+        setupEventPropagationTraps();
+        trapWindowOpen();
+        trapProgrammaticClicksAndSubmits();
+        
+        hookOnclickProperty(HTMLElement.prototype);
+        hookOnclickProperty(Document.prototype);
+        hookOnclickProperty(Window.prototype);
+
+        setupCosmeticStyles();
+        setupVideoSnifferObserver();
+        trapCreateObjectURL();
+        trapMediaElementProperties();
+        trapAttachShadow();
+        setupPlaybackMonitoringListeners();
+        setupMutationObserverAndScanner();
+        setupDOMScannerFallback();
+        setupCosmeticOverlayBuster();
 
         console.log('[K10C Backend] Stealth scriptlets initialized with robust bypasses.');
     }
 
-    function unregisterServiceWorkers(serviceWorkerObj) {
-        if (!serviceWorkerObj || typeof serviceWorkerObj.getRegistrations !== 'function') return;
-        serviceWorkerObj.getRegistrations()
-            .then(function(registrations) {
-                if (!registrations || registrations.length === 0) return;
-                
-                const promises = registrations.map(function(reg) {
-                    return reg.unregister();
-                });
-                
-                Promise.all(promises)
-                    .then(function(results) {
-                        if (results.some(Boolean)) {
-                            console.log('[K10C YouTube Shield] Service Worker unregistered.');
-                            clearCacheStorage();
-                            
-                            const hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
-                            if (!hasReloaded) {
-                                sessionStorage.setItem('k10c_sw_reloaded', 'true');
-                                console.log('[K10C YouTube Shield] Reloading to apply bypass...');
-                                globalThis.location.reload();
-                            }
-                        }
-                    })
-                    .catch(handleError);
-            })
-            .catch(handleError);
-    }
-
-    function clearCacheStorage() {
-        if (!globalThis.caches || typeof globalThis.caches.keys !== 'function') return;
-        globalThis.caches.keys()
-            .then(function(keys) {
-                if (keys && keys.length > 0) {
-                    Promise.all(keys.map(function(key) { 
-                        return globalThis.caches.delete(key); 
-                    })).catch(handleError);
-                }
-            })
-            .catch(handleError);
-    }
-
-    function mockServiceWorkerPrototypes() {
+    function initializeServiceWorkerBypass() {
         try {
-            const mockServiceWorkerContainer = {
-                register: function() {
-                    return Promise.resolve({
-                        scope: '/',
-                        unregister: function() { return Promise.resolve(true); },
-                        update: function() { return Promise.resolve(); },
-                        addEventListener: function() {},
-                        removeEventListener: function() {}
-                    });
-                },
-                addEventListener: function() {},
-                removeEventListener: function() {},
-                getRegistration: function() { return Promise.resolve(undefined); },
-                getRegistrations: function() { return Promise.resolve([]); },
-                get ready() {
-                    return new Promise(function() {});
-                },
-                controller: null
-            };
+            if (navigator.serviceWorker) {
+                navigator.serviceWorker.getRegistrations().then(registrations => {
+                    if (registrations && registrations.length > 0) {
+                        let promises = [];
+                        for (const registration of registrations) {
+                            promises.push(registration.unregister());
+                        }
+                        Promise.all(promises).then(results => {
+                            if (results.some(Boolean)) {
+                                console.log('[K10C YouTube Shield] Service Worker unregistered.');
+                                if (globalThis.caches && typeof globalThis.caches.keys === 'function') {
+                                    globalThis.caches.keys().then(keys => {
+                                        for (const key of keys) {
+                                            globalThis.caches.delete(key);
+                                        }
+                                    }).catch(e => {
+                                        handleError(e);
+                                    });
+                                }
 
+                                let hasReloaded = sessionStorage.getItem('k10c_sw_reloaded');
+                                if (!hasReloaded) {
+                                    sessionStorage.setItem('k10c_sw_reloaded', 'true');
+                                    console.log('[K10C YouTube Shield] Reloading to apply bypass...');
+                                    globalThis.location.reload();
+                                }
+                            }
+                        }).catch(e => {
+                            handleError(e);
+                        });
+                    }
+                }).catch(e => {
+                    handleError(e);
+                });
+            }
             if (globalThis.Navigator?.prototype) {
                 Object.defineProperty(globalThis.Navigator.prototype, 'serviceWorker', {
-                    get: function() { return mockServiceWorkerContainer; },
-                    configurable: true,
+                    get: function() { return undefined; },
+                    configurable: false,
                     enumerable: true
                 });
             }
             Object.defineProperty(navigator, 'serviceWorker', {
-                get: function() { return mockServiceWorkerContainer; },
-                configurable: true,
+                get: function() { return undefined; },
+                configurable: false,
                 enumerable: true
             });
         } catch (e) {
             handleError(e);
-        }
-    }
-
-    function initializeServiceWorkerBypass() {
-        let originalServiceWorker = null;
-        try {
-            originalServiceWorker = navigator.serviceWorker;
-        } catch (e) {
-            handleError(e);
-        }
-
-        mockServiceWorkerPrototypes();
-
-        if (originalServiceWorker) {
-            unregisterServiceWorkers(originalServiceWorker);
         }
     }
 
