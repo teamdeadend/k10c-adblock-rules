@@ -20,6 +20,9 @@
     let lastBridgeDuration = null;
     let lastBridgePosition = null;
     let lastBridgeTime = 0;
+    let lastMutedState = false;
+    let lastPlaybackRate = 1;
+    let isAdActive = false;
 
     const TRUSTED_REDIRECT_DOMAINS = [
         'google.com', 'google.co.in', 'googleadservices.com', 'google-analytics.com', 'googletagmanager.com',
@@ -854,29 +857,49 @@
     // =========================================================================
     // YOUTUBE AD SPEED-UP RUNNER
     // =========================================================================
-    function runYouTubeAdSpeedUp() {
-        if (!globalThis.location.hostname.includes('youtube.com')) return;
-
-        function skipYouTubeAds() {
-            try {
-                const player = document.querySelector('.html5-video-player');
-                if (!player) return;
-
-                if (detectAd(player)) {
-                    const video = player.querySelector('video');
-                    if (video && isFinite(video.duration) && video.duration > 0) {
-                        console.log('[K10C YouTube Shield] Ad detected. Fast-forwarding ad video playback...');
-                        video.playbackRate = 16.0;
-                        video.muted = true;
-                        video.currentTime = video.duration - 0.05;
-                    }
-                    tryClickSkipButton(player);
-                }
-            } catch (e) {
-                handleError(e);
-            }
+    function handleActiveAd(video, player) {
+        if (!isAdActive) {
+            isAdActive = true;
+            lastMutedState = video.muted;
+            lastPlaybackRate = video.playbackRate === 16 ? 1 : video.playbackRate;
+            console.log('[K10C YouTube Shield] Ad detected. Speeding up & muting...', {lastMutedState, lastPlaybackRate});
+        }
+        
+        video.muted = true;
+        if (video.playbackRate !== 16) {
+            video.playbackRate = 16;
         }
 
+        tryClickSkipButton(player);
+
+        if (video.duration && Number.isFinite(video.duration) && video.currentTime < video.duration - 0.2) {
+            video.currentTime = video.duration - 0.1;
+        }
+    }
+
+    function skipYouTubeAds() {
+        try {
+            const player = document.querySelector('.html5-video-player');
+            if (!player) return;
+            
+            const video = player.querySelector('video');
+            if (!video) return;
+
+            if (detectAd(player)) {
+                handleActiveAd(video, player);
+            } else if (isAdActive) {
+                isAdActive = false;
+                video.muted = lastMutedState;
+                video.playbackRate = lastPlaybackRate === 16 ? 1 : lastPlaybackRate;
+                console.log('[K10C YouTube Shield] Ad ended. Restoring state:', {muted: lastMutedState, rate: lastPlaybackRate});
+            }
+        } catch (e) {
+            handleError(e);
+        }
+    }
+
+    function setupYtAdSkipper() {
+        if (!globalThis.location.hostname.includes('youtube.com')) return;
         setInterval(skipYouTubeAds, 150);
     }
 
