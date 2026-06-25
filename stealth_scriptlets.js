@@ -255,7 +255,6 @@
                 }
                 if (type === 'blur') {
                     // Wrap blur events to prevent defocus checks from pausing playback
-                    const originalListener = listener;
                     listener = function(event) {
                         // Suppress defocus execution callbacks by doing nothing
                     };
@@ -280,7 +279,9 @@
                                 setTimeout(obj.onload, 10);
                             }
                         }
-                    } catch (e) {}
+                    } catch (e) {
+                        handleError(e);
+                    }
                     return Array.prototype.push.call(this, obj);
                 },
                 writable: false,
@@ -318,7 +319,9 @@
                 ga: function() {
                     if (arguments.length > 0 && typeof arguments[arguments.length - 1] === 'function') {
                         const callback = arguments[arguments.length - 1];
-                        try { setTimeout(callback, 0); } catch (e) {}
+                        try { setTimeout(callback, 0); } catch (e) {
+                            handleError(e);
+                        }
                     }
                 }
             };
@@ -339,7 +342,7 @@
         try {
             const originalPause = HTMLMediaElement.prototype.pause;
             HTMLMediaElement.prototype.pause = function() {
-                const stack = new Error().stack || '';
+                const stack = new Error('MediaPauseStack').stack || '';
                 if (stack.includes('visibilitychange') || stack.includes('webkitvisibilitychange') || stack.includes('blur')) {
                     console.warn('[K10C Audio Lock] Intercepted and blocked pause execution triggered by visibility loss');
                     return;
