@@ -982,108 +982,164 @@
         return false;
     }
 
-    let gestureStartY = 0;
-    let gestureStartX = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let gestureActive = false;
+    let trackedTarget = null;
+    const VERTICAL_MIN_DELTA = 60; // Minimum vertical drag threshold (pixels)
+    const HORIZONTAL_MAX_LIMIT = 35; // Maximum allowed horizontal drift (pixels)
+    const INTERCEPT_ANGLE = 60;      // Angle threshold for vertical intent (degrees)
 
     function isYtFullscreen() {
         return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
     }
 
-    function handleYtSwipeUp() {
-        console.log('[K10C YT Swipe] Swipe up gesture validated.');
-        if (isYtFullscreen()) {
-            console.log('[K10C YT Swipe] Already in fullscreen. Ignoring swipe up.');
+    function resolveTargetContext(element) {
+        if (!element) return 'PAGE';
+        if (element.closest('.html5-video-player') || element.closest('ytm-player') || element.closest('ytm-player-view-model') || element.closest('.video-player')) {
+            return 'PLAYER';
+        }
+        if (element.closest('ytm-watch-metadata-renderer') || element.closest('.ytm-watch-metadata') || element.closest('#watch-header') || element.closest('#watch-metadata-app-promo-renderer')) {
+            return 'METADATA';
+        }
+        return 'PAGE';
+    }
+
+    function enterFullscreenMode() {
+        if (findAndClickFullscreenButton()) {
             return;
         }
-        console.log('[K10C YT Swipe] Triggering fullscreen...');
-        findAndClickFullscreenButton();
-    }
-
-    function handleYtSwipeDown() {
-        console.log('[K10C YT Swipe] Swipe down gesture validated.');
-        if (isYtFullscreen()) {
-            console.log('[K10C YT Swipe] Exiting fullscreen...');
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            }
-        } else {
-            console.log('[K10C YT Swipe] Minimizing watch page...');
-            if (findAndClickMinimizeButton()) {
-                return;
-            }
-            if (clickTopLeftBackButton()) {
-                return;
-            }
-            if (globalThis.location.pathname.startsWith('/watch')) {
-                console.log('[K10C YT Swipe] Falling back to history.back()');
-                globalThis.history.back();
+        const playerWrapper = document.querySelector('div.html5-video-player') || 
+                              document.querySelector('ytm-player') ||
+                              document.querySelector('ytm-player-view-model');
+        if (playerWrapper) {
+            const requestFS = playerWrapper.requestFullscreen || 
+                              playerWrapper.webkitRequestFullscreen || 
+                              playerWrapper.mozRequestFullScreen || 
+                              playerWrapper.msRequestFullscreen;
+            if (requestFS) {
+                requestFS.call(playerWrapper).catch(function(err) {
+                    console.warn('[GestureEngine] Fullscreen request rejected:', err);
+                });
             }
         }
     }
 
-    function onYtTouchStart(e) {
-        if (!globalThis.location.pathname.startsWith('/watch')) return;
-
-        const clientY = e.touches[0].clientY;
-        const clientX = e.touches[0].clientX;
-        const isFullscreen = isYtFullscreen();
-        
-        const player = document.querySelector('.html5-video-player') || 
-                       document.querySelector('ytm-video-player-renderer') || 
-                       document.querySelector('video');
-        
-        let isInsidePlayer = isFullscreen;
-        if (!isInsidePlayer && player) {
-            const rect = player.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-                isInsidePlayer = (
-                    clientX >= rect.left &&
-                    clientX <= rect.right &&
-                    clientY >= rect.top &&
-                    clientY <= rect.bottom
-                );
-            }
-        }
-        
-        const isBackBtnRegion = clientX < 60 && clientY < 60;
-
-        if (isInsidePlayer || isBackBtnRegion) {
-            gestureStartY = clientY;
-            gestureStartX = clientX;
-            console.log('[K10C YT Swipe] Touchstart registered at', gestureStartX, gestureStartY, 'isFullscreen:', isFullscreen, 'isInsidePlayer:', isInsidePlayer, 'isBackBtnRegion:', isBackBtnRegion);
-        } else {
-            gestureStartY = 0;
-            gestureStartX = 0;
+    function exitFullscreenMode() {
+        const doc = window.document;
+        const cancelFS = doc.exitFullscreen || 
+                         doc.webkitExitFullscreen || 
+                         doc.mozCancelFullScreen || 
+                         doc.msExitFullscreen;
+        if (cancelFS) {
+            cancelFS.call(doc).catch(function(err) {
+                console.warn('[GestureEngine] Fullscreen exit rejected:', err);
+            });
         }
     }
 
-    function onYtTouchEnd(e) {
-        if (gestureStartY === 0) return;
-
-        const deltaY = e.changedTouches[0].clientY - gestureStartY;
-        const deltaX = e.changedTouches[0].clientX - gestureStartX;
-
-        console.log('[K10C YT Swipe] Touchend detected. deltaY:', deltaY, 'deltaX:', deltaX);
-
-        gestureStartY = 0;
-        gestureStartX = 0;
-
-        const isSignificantSwipe = Math.abs(deltaY) > 100 && Math.abs(deltaY) > Math.abs(deltaX) * 1.5;
-        if (!isSignificantSwipe) return;
-
-        if (deltaY < 0) {
-            handleYtSwipeUp();
-        } else {
-            handleYtSwipeDown();
+    function minimizeWatchPage() {
+        if (findAndClickMinimizeButton()) {
+            return;
         }
+        if (clickTopLeftBackButton()) {
+            return;
+        }
+        if (globalThis.location.pathname.startsWith('/watch')) {
+            console.log('[GestureEngine] Falling back to history.back()');
+            globalThis.history.back();
+        }
+    }
+
+    function executeGestureAction(deltaY, targetContext) {
+        const isCurrentlyFullscreen = isYtFullscreen();
+        if (deltaY < 0) { // Upward Gesture Vector
+            if (targetContext === 'PLAYER' && !isCurrentlyFullscreen) {
+                enterFullscreenMode();
+            }
+        } else { // Downward Gesture Vector
+            if (isCurrentlyFullscreen) {
+                exitFullscreenMode();
+            } else if (targetContext === 'PLAYER' || targetContext === 'METADATA') {
+                minimizeWatchPage();
+            }
+        }
+    }
+
+    function onYtTouchStart(event) {
+        if (!globalThis.location.pathname.startsWith('/watch')) {
+            gestureActive = false;
+            return;
+        }
+        if (event.touches.length > 1) {
+            gestureActive = false;
+            return;
+        }
+        const touch = event.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        trackedTarget = event.target;
+        gestureActive = true;
+    }
+
+    function onYtTouchMove(event) {
+        if (!gestureActive || event.touches.length > 1) return;
+
+        const touch = event.touches[0];
+        const currentX = touch.clientX;
+        const currentY = touch.clientY;
+
+        const deltaX = currentX - touchStartX;
+        const deltaY = currentY - touchStartY;
+
+        // Determine vector trajectory angle
+        const angle = Math.abs(Math.atan2(deltaY, deltaX) * (180 / Math.PI));
+
+        // Skip non-vertical interactions (e.g. scrubbing or lateral page swipes)
+        if (angle < INTERCEPT_ANGLE) {
+            gestureActive = false;
+            return;
+        }
+
+        const targetContext = resolveTargetContext(trackedTarget);
+        let shouldIntercept = false;
+
+        if (targetContext === 'PLAYER') {
+            shouldIntercept = true;
+        } else if (targetContext === 'METADATA') {
+            const scrollOffset = window.scrollY || document.documentElement.scrollTop;
+            if (deltaY > 0 && scrollOffset <= 1) {
+                shouldIntercept = true;
+            }
+        }
+
+        if (shouldIntercept) {
+            if (event.cancelable) {
+                event.preventDefault();
+            }
+            if (Math.abs(deltaY) > VERTICAL_MIN_DELTA && Math.abs(deltaX) < HORIZONTAL_MAX_LIMIT) {
+                event.stopPropagation();
+                gestureActive = false; // Close active tracking for the gesture
+                executeGestureAction(deltaY, targetContext);
+            }
+        } else {
+            // Cancel gesture tracking to let native scroll take over
+            gestureActive = false;
+        }
+    }
+
+    function onYtTouchEnd(event) {
+        gestureActive = false;
+        trackedTarget = null;
     }
 
     function setupYtSwipeToMinimize() {
         if (!globalThis.location.hostname.includes('youtube.com')) return;
-        globalThis.addEventListener('touchstart', onYtTouchStart, { passive: true });
-        globalThis.addEventListener('touchend', onYtTouchEnd, { passive: true });
+        globalThis.addEventListener('touchstart', onYtTouchStart, { passive: false, capture: true });
+        globalThis.addEventListener('touchmove', onYtTouchMove, { passive: false, capture: true });
+        globalThis.addEventListener('touchend', onYtTouchEnd, { passive: true, capture: true });
+        globalThis.addEventListener('touchcancel', onYtTouchEnd, { passive: true, capture: true });
+        console.log('[K10C YT Swipe] Custom Android WebView Interception Handler Engaged.');
     }
 
     // =========================================================================
