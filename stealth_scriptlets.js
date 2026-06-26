@@ -1078,7 +1078,7 @@
         if (!styleSheet) {
             styleSheet = document.createElement('style');
             styleSheet.id = 'k10c-float-styles';
-            styleSheet.innerHTML = `
+            styleSheet.textContent = `
                 #k10c-custom-floating-player .html5-video-player,
                 #k10c-custom-floating-player ytm-player,
                 #k10c-custom-floating-player video {
@@ -1106,7 +1106,7 @@
 
         // Add a close button to the floating player
         const closeBtn = document.createElement('button');
-        closeBtn.innerHTML = '✕';
+        closeBtn.textContent = '✕';
         const btnStyles = {
             position: 'absolute',
             top: '4px',
