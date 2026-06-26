@@ -9,6 +9,10 @@
     const visibleVideosRegistry = [];
     let lastNotifiedUrl = null;
     let activeMediaElement = null;
+    let isFloatingPlayerActive = false;
+    let originalPlayerParent = null;
+    let originalPlayerSibling = null;
+    let floatingContainer = null;
 
     let lastPostedState = null;
     let lastPostedMediaSrc = null;
@@ -348,6 +352,12 @@
         try {
             const originalPause = HTMLMediaElement.prototype.pause;
             HTMLMediaElement.prototype.pause = function() {
+                if (isFloatingPlayerActive && this === activeMediaElement) {
+                    if (!globalThis.K10CAllowPause) {
+                        console.warn('[K10C Audio Lock] Intercepted and blocked pause execution during float');
+                        return;
+                    }
+                }
                 const stack = new Error('MediaPauseStack').stack || '';
                 if (stack.includes('visibilitychange') || stack.includes('webkitvisibilitychange') || stack.includes('blur')) {
                     console.warn('[K10C Audio Lock] Intercepted and blocked pause execution triggered by visibility loss');
@@ -903,52 +913,7 @@
         setInterval(skipYouTubeAds, 150);
     }
 
-    function findAndClickMinimizeButton() {
-        const minimizeBtn = document.querySelector('.cbr-minimize-button') || 
-                            document.querySelector('.player-control-minimize') || 
-                            document.querySelector('.ytp-back-button') ||
-                            document.querySelector('.header-back-button') ||
-                            document.querySelector('.accessibility-navigation-back-button') ||
-                            document.querySelector('button[aria-label*="back" i]:not([aria-label*="playback" i])') ||
-                            document.querySelector('button[aria-label*="collapse" i]') ||
-                            document.querySelector('button[aria-label*="close" i]') ||
-                            document.querySelector('button[aria-label*="minimize" i]') ||
-                            document.querySelector('button[aria-label*="dismiss" i]') ||
-                            document.querySelector('a[aria-label*="back" i]:not([aria-label*="playback" i])');
-                             
-        if (minimizeBtn && typeof minimizeBtn.click === 'function' && minimizeBtn.offsetHeight > 0) {
-            minimizeBtn.click();
-            console.log('[K10C YT Swipe] Clicked minimize button element:', minimizeBtn);
-            return true;
-        }
-        return false;
-    }
 
-    function clickTopLeftBackButton() {
-        // Find all clickable buttons or anchors in the top bar region
-        const header = document.querySelector('header, ytm-header-bar, .header-bar, .ytp-chrome-top, .player-controls');
-        const searchScope = header || document;
-        const candidates = searchScope.querySelectorAll('button, a, .yt-spec-button-shape-next');
-        
-        for (const el of candidates) {
-            const rect = el.getBoundingClientRect();
-            // Check if the element is physically located in the top-left corner (typically back button is here)
-            if (rect.width > 0 && rect.height > 0 && rect.top < 65 && rect.left < 65) {
-                const hasIcon = el.querySelector('svg, i, img') !== null;
-                const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
-                const isBack = (ariaLabel.includes('back') && !ariaLabel.includes('playback')) || ariaLabel.includes('close') || ariaLabel.includes('collapse') || ariaLabel.includes('dismiss');
-                
-                if (hasIcon || isBack) {
-                    if (typeof el.click === 'function') {
-                        el.click();
-                        console.log('[K10C YT Swipe] Clicked top-left back button:', el);
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
 
     function findAndClickFullscreenButton() {
         const fullscreenBtn = document.querySelector('.ytp-fullscreen-button') || 
@@ -1053,16 +1018,225 @@
     }
 
     function minimizeWatchPage() {
-        if (findAndClickMinimizeButton()) {
+        console.log('[K10C YT Swipe] Minimizing watch page directly to custom float...');
+        // Always trigger custom JS floating player overlay directly to prevent watch page unmount destruction
+        if (triggerCustomJSFloatingPlayer()) {
             return;
         }
-        if (clickTopLeftBackButton()) {
-            return;
-        }
+        
         if (globalThis.location.pathname.startsWith('/watch')) {
             console.log('[GestureEngine] Falling back to history.back()');
             globalThis.history.back();
         }
+    }
+
+    function triggerCustomJSFloatingPlayer() {
+        if (isFloatingPlayerActive) return true;
+
+        const video = document.querySelector('video');
+        if (!video) return false;
+
+        activeMediaElement = video;
+        globalThis.K10CActiveMediaElement = video;
+
+        const player = document.querySelector('.html5-video-player') || 
+                       document.querySelector('ytm-player') || 
+                       video;
+
+        console.log('[K10C YT Swipe] Creating custom JS floating player...');
+
+        // Save original parent and position so we can restore it later if clicked
+        originalPlayerParent = player.parentNode;
+        originalPlayerSibling = player.nextSibling;
+
+        // Create a floating container for the player
+        floatingContainer = document.createElement('div');
+        floatingContainer.id = 'k10c-custom-floating-player';
+        
+        // CSS Styles for floating container (fixed at bottom-right, draggable)
+        const styles = {
+            position: 'fixed',
+            bottom: '76px', // position it above the React Native bottom tab bar
+            right: '16px',
+            width: '160px',
+            height: '90px',
+            zIndex: '2147483647', // maximum z-index
+            borderRadius: '12px',
+            overflow: 'hidden',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            backgroundColor: '#000',
+            touchAction: 'none' // prevent default scrolling during drag
+        };
+
+        for (const [key, value] of Object.entries(styles)) {
+            floatingContainer.style[key] = value;
+        }
+
+        // Add CSS styles to head to override player dimensions inside floating container
+        let styleSheet = document.getElementById('k10c-float-styles');
+        if (!styleSheet) {
+            styleSheet = document.createElement('style');
+            styleSheet.id = 'k10c-float-styles';
+            styleSheet.innerHTML = `
+                #k10c-custom-floating-player .html5-video-player,
+                #k10c-custom-floating-player ytm-player,
+                #k10c-custom-floating-player video {
+                    width: 100% !important;
+                    height: 100% !important;
+                    position: absolute !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    z-index: 1 !important;
+                }
+                #k10c-custom-floating-player .ytp-chrome-bottom,
+                #k10c-custom-floating-player .ytp-gradient-bottom,
+                #k10c-custom-floating-player .ytp-chrome-top,
+                #k10c-custom-floating-player .ytp-gradient-top,
+                #k10c-custom-floating-player .player-controls,
+                #k10c-custom-floating-player .ytp-share-panel,
+                #k10c-custom-floating-player .ytp-storyboard-frame,
+                #k10c-custom-floating-player [class*="control-bar"],
+                #k10c-custom-floating-player [class*="overlay"] {
+                    display: none !important;
+                }
+            `;
+            document.head.appendChild(styleSheet);
+        }
+
+        // Add a close button to the floating player
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        const btnStyles = {
+            position: 'absolute',
+            top: '4px',
+            right: '4px',
+            width: '24px',
+            height: '24px',
+            borderRadius: '12px',
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            color: '#FFF',
+            border: 'none',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            justifyContent: 'center',
+            alignItems: 'center',
+            display: 'flex',
+            zIndex: '2147483647',
+            cursor: 'pointer'
+        };
+        for (const [key, value] of Object.entries(btnStyles)) {
+            closeBtn.style[key] = value;
+        }
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            destroyCustomFloatingPlayer();
+        });
+        floatingContainer.appendChild(closeBtn);
+
+        // Move the player inside the floating container
+        document.body.appendChild(floatingContainer);
+        floatingContainer.appendChild(player);
+
+        // Make the floating container draggable (touchstart, touchmove, touchend)
+        let activeDrag = false;
+        let startX = 0;
+        let startY = 0;
+        let initialRight = 16;
+        let initialBottom = 76;
+
+        floatingContainer.addEventListener('touchstart', (e) => {
+            if (e.target === closeBtn) return;
+            activeDrag = true;
+            const touch = e.touches[0];
+            startX = touch.clientX;
+            startY = touch.clientY;
+            initialRight = Number.parseInt(globalThis.getComputedStyle(floatingContainer).right, 10) || 16;
+            initialBottom = Number.parseInt(globalThis.getComputedStyle(floatingContainer).bottom, 10) || 76;
+        }, { passive: true });
+
+        floatingContainer.addEventListener('touchmove', (e) => {
+            if (!activeDrag) return;
+            const touch = e.touches[0];
+            const dx = touch.clientX - startX;
+            const dy = touch.clientY - startY;
+            floatingContainer.style.right = (initialRight - dx) + 'px';
+            floatingContainer.style.bottom = (initialBottom - dy) + 'px';
+        }, { passive: true });
+
+        floatingContainer.addEventListener('touchend', () => {
+            activeDrag = false;
+        }, { passive: true });
+
+        // Clicking the floating player restores it to full watch view
+        floatingContainer.addEventListener('click', (e) => {
+            if (e.target === closeBtn) return;
+            restorePlayerFromFloating();
+        });
+
+        isFloatingPlayerActive = true;
+
+        // Navigate back/home internally via logo SPA click or history back
+        const logo = document.querySelector('a#logo') || 
+                     document.querySelector('a.header-logo') || 
+                     document.querySelector('a[href="/"]') ||
+                     document.querySelector('.cbr-logo') ||
+                     document.querySelector('.logo');
+        if (logo && typeof logo.click === 'function') {
+            logo.click();
+        } else if (globalThis.location.pathname.startsWith('/watch')) {
+            globalThis.history.back();
+        }
+
+        return true;
+    }
+
+    function restorePlayerFromFloating() {
+        if (!isFloatingPlayerActive || !floatingContainer) return;
+        
+        const player = floatingContainer.querySelector('.html5-video-player') || 
+                       floatingContainer.querySelector('ytm-player') || 
+                       floatingContainer.querySelector('video');
+                       
+        if (player) {
+            player.style.removeProperty('position');
+            player.style.removeProperty('bottom');
+            player.style.removeProperty('right');
+            player.style.removeProperty('width');
+            player.style.removeProperty('height');
+            player.style.removeProperty('zIndex');
+            player.style.removeProperty('borderRadius');
+            player.style.removeProperty('boxShadow');
+            
+            if (originalPlayerParent) {
+                if (originalPlayerSibling) {
+                    originalPlayerSibling.before(player);
+                } else {
+                    originalPlayerParent.appendChild(player);
+                }
+            }
+        }
+
+        floatingContainer.remove();
+        floatingContainer = null;
+        isFloatingPlayerActive = false;
+
+        globalThis.history.forward();
+    }
+
+    function destroyCustomFloatingPlayer() {
+        if (!isFloatingPlayerActive || !floatingContainer) return;
+        const video = floatingContainer.querySelector('video');
+        if (video) {
+            globalThis.K10CAllowPause = true;
+            video.pause();
+            globalThis.K10CAllowPause = false;
+        }
+        floatingContainer.remove();
+        floatingContainer = null;
+        isFloatingPlayerActive = false;
+        activeMediaElement = null;
+        globalThis.K10CActiveMediaElement = null;
     }
 
     function executeGestureAction(deltaY, targetContext) {
@@ -1832,6 +2006,14 @@
                 Object.defineProperty(HTMLMediaElement.prototype, 'src', {
                     get: function() { return srcDescriptor.get.call(this); },
                     set: function(val) {
+                        if (isFloatingPlayerActive && this === activeMediaElement) {
+                            if (!val || val === '' || val === 'about:blank') {
+                                console.warn('[K10C] Intercepted and blocked resetting video src to empty during float');
+                                return;
+                            }
+                            console.log('[K10C] New video source detected during float. Deactivating float.');
+                            destroyCustomFloatingPlayer();
+                        }
                         srcDescriptor.set.call(this, val);
                         registerActiveVideo(this);
                     },
@@ -1845,6 +2027,14 @@
                 Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
                     get: function() { return srcObjDescriptor.get.call(this); },
                     set: function(val) {
+                        if (isFloatingPlayerActive && this === activeMediaElement) {
+                            if (!val) {
+                                console.warn('[K10C] Intercepted and blocked resetting video srcObject to null during float');
+                                return;
+                            }
+                            console.log('[K10C] New video srcObject detected during float. Deactivating float.');
+                            destroyCustomFloatingPlayer();
+                        }
                         srcObjDescriptor.set.call(this, val);
                         registerActiveVideo(this);
                     },
@@ -1862,6 +2052,12 @@
                 Object.defineProperty(HTMLSourceElement.prototype, 'src', {
                     get: function() { return sourceSrcDescriptor.get.call(this); },
                     set: function(val) {
+                        if (isFloatingPlayerActive && this.parentNode === activeMediaElement) {
+                            if (!val || val === '') {
+                                console.warn('[K10C] Intercepted and blocked resetting source src during float');
+                                return;
+                            }
+                        }
                         sourceSrcDescriptor.set.call(this, val);
                         if (this.parentNode?.tagName === 'VIDEO') {
                             registerActiveVideo(this.parentNode);
@@ -1882,6 +2078,66 @@
                 return originalPlay.apply(this, arguments);
             };
             makeNative(HTMLMediaElement.prototype.play, 'play');
+        } catch (e) {
+            handleError(e);
+        }
+
+        try {
+            const originalLoad = HTMLMediaElement.prototype.load;
+            HTMLMediaElement.prototype.load = function() {
+                if (isFloatingPlayerActive && this === activeMediaElement) {
+                    console.warn('[K10C] Intercepted and blocked load() call during float');
+                    return;
+                }
+                return originalLoad.apply(this, arguments);
+            };
+            makeNative(HTMLMediaElement.prototype.load, 'load');
+        } catch (e) {
+            handleError(e);
+        }
+
+        try {
+            const originalRemoveAttribute = Element.prototype.removeAttribute;
+            Element.prototype.removeAttribute = function(attr) {
+                if (isFloatingPlayerActive && this === activeMediaElement && attr === 'src') {
+                    console.warn('[K10C] Blocked removeAttribute("src") during float');
+                    return;
+                }
+                return originalRemoveAttribute.call(this, attr);
+            };
+            makeNative(Element.prototype.removeAttribute, 'removeAttribute');
+        } catch (e) {
+            handleError(e);
+        }
+
+        try {
+            const originalRemove = Element.prototype.remove;
+            Element.prototype.remove = function() {
+                if (isFloatingPlayerActive && this !== floatingContainer) {
+                    if (this === activeMediaElement || floatingContainer?.contains(this)) {
+                        console.warn('[K10C] Blocked remove() call on player/video elements during float');
+                        return;
+                    }
+                }
+                return originalRemove.call(this);
+            };
+            makeNative(Element.prototype.remove, 'remove');
+        } catch (e) {
+            handleError(e);
+        }
+
+        try {
+            const originalRemoveChild = Node.prototype.removeChild;
+            Node.prototype.removeChild = function(child) {
+                if (isFloatingPlayerActive && (child === activeMediaElement || floatingContainer?.contains(child))) {
+                    if (child.parentNode !== this) {
+                        console.warn('[K10C] Intercepted removeChild on unparented player/video');
+                        return child;
+                    }
+                }
+                return originalRemoveChild.call(this, child);
+            };
+            makeNative(Node.prototype.removeChild, 'removeChild');
         } catch (e) {
             handleError(e);
         }
