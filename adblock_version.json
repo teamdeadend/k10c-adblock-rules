@@ -1,9 +1,9 @@
 {
-  "version": 1793329293,
-  "sha256": "f99ffb0bbfafb308022acd750475fdcd6700b471c2dbc0ed21fd780fc8875b4d",
-  "rules_version": 1793329293,
-  "rules_sha256": "f99ffb0bbfafb308022acd750475fdcd6700b471c2dbc0ed21fd780fc8875b4d",
-  "rules_count": 154460,
+  "version": 1793360850,
+  "sha256": "31ac870c7665e90cee37c989d55b95a62ad7ab06faed01d29f290141f078746d",
+  "rules_version": 1793360850,
+  "rules_sha256": "31ac870c7665e90cee37c989d55b95a62ad7ab06faed01d29f290141f078746d",
+  "rules_count": 154586,
   "scriptlets_version": 1792176278,
   "scriptlets_sha256": "03b347ce1f50984e9256b067b7b280c729daca8d71735ab25f2ee43864c9a447"
 }
